@@ -482,8 +482,8 @@ def get_excluded_dates(vacation_id: str) -> List[ExcludedDate]:
         return []
 
 
-def add_excluded_date(vacation_id: str, date_val: date, reason: str, is_holiday: bool = True, time_scope: str = "full") -> bool:
-    """제외일 추가 (오전/오후/종일 선택 가능)"""
+def add_excluded_date(vacation_id: str, date_val: date, reason: str, is_holiday: bool = True) -> bool:
+    """제외일 추가"""
     try:
         date_str = date_val.isoformat() if hasattr(date_val, 'isoformat') else date_val
         data = {
@@ -491,7 +491,6 @@ def add_excluded_date(vacation_id: str, date_val: date, reason: str, is_holiday:
             "date": date_str,
             "reason": reason,
             "is_holiday": is_holiday,
-            "time_scope": time_scope,
         }
         # upsert_record 사용 (조회 후 있으면 업데이트, 없으면 삽입)
         result = upsert_record("excluded_dates", data, {

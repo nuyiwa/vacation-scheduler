@@ -564,8 +564,6 @@ def _render_excluded_dates_tab(vacation: Vacation):
 
     excluded = get_excluded_dates(vacation.id)
 
-    _TIME_SCOPE_LABELS = {"am": "오전만", "pm": "오후만", "full": "종일"}
-
     col1, col2 = st.columns([3, 2])
 
     with col1:
@@ -573,27 +571,25 @@ def _render_excluded_dates_tab(vacation: Vacation):
         if excluded:
             excluded_data = []
             for e in excluded:
-                scope = getattr(e, "time_scope", "full")
                 excluded_data.append({
                     "날짜": e.date.strftime("%m/%d(%a)"),
-                    "적용 시간": _TIME_SCOPE_LABELS.get(scope, scope),
                     "사유": e.reason,
                     "유형": "공휴일" if e.is_holiday else "학교 휴일",
                     "id": e.id
                 })
 
             df = pd.DataFrame(excluded_data)
-            st.dataframe(df[["날짜", "적용 시간", "사유", "유형"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["날짜", "사유", "유형"]], use_container_width=True, hide_index=True)
 
             # 삭제
             exclude_to_remove = st.multiselect(
                 "삭제할 제외일 선택",
-                options=[f"{r['날짜']} ({r['적용 시간']}) - {r['사유']}" for r in excluded_data],
+                options=[f"{r['날짜']} - {r['사유']}" for r in excluded_data],
                 key="remove_excluded"
             )
             if exclude_to_remove and st.button("선택 삭제", key="remove_excluded_btn"):
                 for item in exclude_to_remove:
-                    idx = [f"{r['날짜']} ({r['적용 시간']}) - {r['사유']}" for r in excluded_data].index(item)
+                    idx = [f"{r['날짜']} - {r['사유']}" for r in excluded_data].index(item)
                     remove_excluded_date(excluded_data[idx]["id"])
                 st.success("✅ 삭제 완료")
                 st.rerun()
@@ -605,18 +601,12 @@ def _render_excluded_dates_tab(vacation: Vacation):
         with st.form("add_excluded_form"):
             ex_date = st.date_input("날짜", value=vacation.start_date,
                                     min_value=vacation.start_date, max_value=vacation.end_date)
-            ex_time_scope = st.selectbox(
-                "적용 시간",
-                options=["full", "am", "pm"],
-                format_func=lambda x: _TIME_SCOPE_LABELS[x]
-            )
             ex_reason = st.text_input("사유", placeholder="개교기념일")
             ex_is_holiday = st.checkbox("공휴일", value=True)
 
             if st.form_submit_button("추가", use_container_width=True):
-                if add_excluded_date(vacation.id, ex_date, ex_reason, ex_is_holiday, ex_time_scope):
-                    scope_label = _TIME_SCOPE_LABELS[ex_time_scope]
-                    st.success(f"✅ {ex_date} ({scope_label}) 제외일이 추가되었습니다.")
+                if add_excluded_date(vacation.id, ex_date, ex_reason, ex_is_holiday):
+                    st.success(f"✅ {ex_date} 제외일이 추가되었습니다.")
                     st.rerun()
                 else:
                     st.error("❌ 추가에 실패했습니다.")
