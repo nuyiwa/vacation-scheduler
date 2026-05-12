@@ -236,12 +236,12 @@ st.markdown("""
     /* ===== 모바일 최적화 ===== */
     @media (max-width: 768px) {
         .block-container {
-            padding: 0.75rem 0.75rem 5rem !important;
+            padding: 0.75rem 0.75rem 2rem !important;
             max-width: 100% !important;
         }
         .stButton > button {
-            padding: 0.75rem 1rem !important;
-            font-size: 1rem !important;
+            padding: 0.4rem 0.6rem !important;
+            font-size: 0.85rem !important;
         }
         .stTabs [data-baseweb="tab-list"] {
             overflow-x: auto;
@@ -577,23 +577,23 @@ def _nav_pages() -> list:
 
 
 def render_topnav():
-    """상단 내비게이션 바 — Streamlit 버튼 한 줄"""
+    """상단 내비게이션 바 — 한 줄 고정"""
     current = st.session_state.get("current_page", "home")
     pages = _nav_pages()
 
+    # use_container_width 없이 → 버튼이 텍스트 크기만큼만 차지
     cols = st.columns(len(pages) + 1)
     for i, (icon, label, key) in enumerate(pages):
         with cols[i]:
             if st.button(
                 f"{icon} {label}",
                 key=f"topnav_{key}",
-                use_container_width=True,
                 type="primary" if current == key else "secondary",
             ):
                 st.session_state["current_page"] = key
                 st.rerun()
     with cols[-1]:
-        if st.button("🚪", key="topnav_logout", use_container_width=True):
+        if st.button("🚪", key="topnav_logout"):
             logout_user()
 
     st.markdown("<hr style='margin:0.25rem 0 1rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
