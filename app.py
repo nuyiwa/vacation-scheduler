@@ -583,33 +583,46 @@ def _nav_pages() -> list:
 
 
 def render_topnav():
-    """상단 내비게이션 (모바일/PC 공통)"""
+    """상단 내비게이션 바 — HTML 기반 한 줄 고정"""
     current = st.session_state.get("current_page", "home")
-    name = st.session_state.get("user_name", "")
     pages = _nav_pages()
 
-    # 사용자 이름 + 내비 버튼 + 로그아웃
-    info_col, *nav_cols, logout_col = st.columns([2] + [1] * len(pages) + [1])
-    with info_col:
-        st.markdown(
-            f"<div style='padding:0.4rem 0;font-weight:700;color:#1a2e45;'>🏫 {name}</div>",
-            unsafe_allow_html=True,
+    # 내비 링크 HTML (query param으로 페이지 전환)
+    nav_items = ""
+    for icon, label, key in pages:
+        if current == key:
+            style = ("background:#4A90D9;color:white;border:none;")
+        else:
+            style = ("background:white;color:#2C3E50;border:1.5px solid #dde4ed;")
+        nav_items += (
+            f'<a href="?page={key}" style="'
+            f'text-decoration:none;padding:0.5rem 0.9rem;border-radius:10px;'
+            f'font-weight:600;font-size:0.88rem;white-space:nowrap;{style}">'
+            f'{icon} {label}</a>'
         )
-    for col, (icon, label, page_key) in zip(nav_cols, pages):
-        with col:
-            if st.button(
-                f"{icon} {label}",
-                key=f"topnav_{page_key}",
-                use_container_width=True,
-                type="primary" if current == page_key else "secondary",
-            ):
-                st.session_state["current_page"] = page_key
-                st.rerun()
-    with logout_col:
-        if st.button("🚪", key="topnav_logout", use_container_width=True):
-            logout_user()
 
-    st.markdown("<hr style='margin:0.25rem 0 1rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div style="display:flex;align-items:center;gap:6px;
+                flex-wrap:nowrap;overflow-x:auto;
+                padding:0.5rem 0 0.75rem;margin-bottom:0.25rem;">
+        {nav_items}
+        <a href="?page=__logout__" style="text-decoration:none;padding:0.5rem 0.7rem;
+           border-radius:10px;background:white;border:1.5px solid #dde4ed;
+           color:#e74c3c;font-weight:600;font-size:0.88rem;white-space:nowrap;
+           margin-left:auto;">🚪</a>
+    </div>
+    <hr style="margin:0 0 1rem;border:none;border-top:1px solid #e8ecf0;">
+    """, unsafe_allow_html=True)
+
+    # query param으로 페이지/로그아웃 처리
+    page_param = st.query_params.get("page", None)
+    if page_param == "__logout__":
+        st.query_params.clear()
+        logout_user()
+    elif page_param and page_param != current:
+        st.session_state["current_page"] = page_param
+        st.query_params.clear()
+        st.rerun()
 
 
 def render_bottomnav():
