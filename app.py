@@ -287,24 +287,26 @@ st.markdown("""
 import extra_streamlit_components as stx
 from datetime import datetime, timedelta
 
-@st.cache_resource
-def _get_cookie_manager():
-    return stx.CookieManager(key="vac_cookie_mgr")
+def _restore_session_from_cookies():
+    """쿠키에서 세션 정보를 복원합니다.
+    
+    CookieManager는 widget이므로 모듈 레벨이 아닌 함수 내부에서 생성해야
+    CachedWidgetWarning을 피할 수 있습니다.
+    """
+    _cm = stx.CookieManager(key="vac_cookie_mgr")
+    if not st.session_state.get("authenticated"):
+        _uid = _cm.get("v_uid")
+        if _uid:
+            st.session_state.update({
+                "authenticated": True,
+                "user_id":    _uid,
+                "user_email": _cm.get("v_ue") or "",
+                "user_name":  _cm.get("v_un") or "",
+                "user_role":  _cm.get("v_ur") or "teacher",
+                "current_page": "home",
+            })
 
-_cm = _get_cookie_manager()
-
-# 쿠키에서 세션 복원
-if not st.session_state.get("authenticated"):
-    _uid = _cm.get("v_uid")
-    if _uid:
-        st.session_state.update({
-            "authenticated": True,
-            "user_id":    _uid,
-            "user_email": _cm.get("v_ue") or "",
-            "user_name":  _cm.get("v_un") or "",
-            "user_role":  _cm.get("v_ur") or "teacher",
-            "current_page": "home",
-        })
+_restore_session_from_cookies()
 
 # ============================================================
 # 세션 상태 초기화
@@ -395,10 +397,11 @@ def login_user(email: str, password: str) -> bool:
 
             # 쿠키에 저장 (30일 유지)
             _exp = datetime.now() + timedelta(days=30)
-            _cm.set("v_uid", st.session_state["user_id"],    expires_at=_exp)
-            _cm.set("v_ue",  st.session_state["user_email"], expires_at=_exp)
-            _cm.set("v_un",  st.session_state["user_name"],  expires_at=_exp)
-            _cm.set("v_ur",  st.session_state["user_role"],  expires_at=_exp)
+            _cm_login = stx.CookieManager(key="vac_cookie_mgr_login")
+            _cm_login.set("v_uid", st.session_state["user_id"],    expires_at=_exp)
+            _cm_login.set("v_ue",  st.session_state["user_email"], expires_at=_exp)
+            _cm_login.set("v_un",  st.session_state["user_name"],  expires_at=_exp)
+            _cm_login.set("v_ur",  st.session_state["user_role"],  expires_at=_exp)
             return True
         else:
             error_msg = response.get("error", "로그인에 실패했습니다.")
@@ -415,8 +418,9 @@ def logout_user():
     sign_out()
 
     # 쿠키 삭제
+    _cm_logout = stx.CookieManager(key="vac_cookie_mgr_logout")
     for _k in ["v_uid", "v_ue", "v_un", "v_ur"]:
-        _cm.delete(_k)
+        _cm_logout.delete(_k)
 
     for key in ["authenticated", "user_id", "user_email", "user_name", "user_role"]:
         if key in st.session_state:
