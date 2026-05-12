@@ -282,49 +282,29 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
-# 자동 로그인 — localStorage → query_param → session_state 복원
+# 쿠키 매니저 (자동 로그인용)
 # ============================================================
-import json, base64 as _b64
+import extra_streamlit_components as stx
+from datetime import datetime, timedelta
 
-def _encode_auth(uid, ue, un, ur):
-    return _b64.b64encode(json.dumps({"uid":uid,"ue":ue,"un":un,"ur":ur}).encode()).decode()
+@st.cache_resource
+def _get_cookie_manager():
+    return stx.CookieManager(key="vac_cookie_mgr")
 
-def _decode_auth(encoded):
-    d = json.loads(_b64.b64decode(encoded).decode())
-    return d["uid"], d["ue"], d["un"], d["ur"]
+_cm = _get_cookie_manager()
 
-# 1) localStorage → query_param 감지 JS
-st.markdown("""
-<script>
-(function(){
-    var params = new URLSearchParams(window.location.search);
-    var au = params.get('_a');
-    if(au){
-        localStorage.setItem('vac_auth', au);
-    } else {
-        var stored = localStorage.getItem('vac_auth');
-        if(stored){
-            params.set('_a', stored);
-            window.location.search = params.toString();
-        }
-    }
-})();
-</script>
-""", unsafe_allow_html=True)
-
-# 2) query_param → session_state 복원
-_au = st.query_params.get("_a", None)
-if _au and not st.session_state.get("authenticated"):
-    try:
-        uid, ue, un, ur = _decode_auth(_au)
+# 쿠키에서 세션 복원
+if not st.session_state.get("authenticated"):
+    _uid = _cm.get("v_uid")
+    if _uid:
         st.session_state.update({
             "authenticated": True,
-            "user_id": uid, "user_email": ue,
-            "user_name": un, "user_role": ur,
+            "user_id":    _uid,
+            "user_email": _cm.get("v_ue") or "",
+            "user_name":  _cm.get("v_un") or "",
+            "user_role":  _cm.get("v_ur") or "teacher",
             "current_page": "home",
         })
-    except Exception:
-        pass
 
 # ============================================================
 # 세션 상태 초기화
@@ -413,13 +393,12 @@ def login_user(email: str, password: str) -> bool:
                 st.session_state["user_name"] = profile.get("name", email)
                 st.session_state["user_role"] = profile.get("role", "teacher")
 
-            # 자동 로그인용 — query_param에 저장 (JS가 localStorage에 동기화)
-            st.query_params["_a"] = _encode_auth(
-                st.session_state["user_id"],
-                st.session_state["user_email"],
-                st.session_state["user_name"],
-                st.session_state["user_role"],
-            )
+            # 쿠키에 저장 (30일 유지)
+            _exp = datetime.now() + timedelta(days=30)
+            _cm.set("v_uid", st.session_state["user_id"],    expires_at=_exp)
+            _cm.set("v_ue",  st.session_state["user_email"], expires_at=_exp)
+            _cm.set("v_un",  st.session_state["user_name"],  expires_at=_exp)
+            _cm.set("v_ur",  st.session_state["user_role"],  expires_at=_exp)
             return True
         else:
             error_msg = response.get("error", "로그인에 실패했습니다.")
@@ -435,9 +414,9 @@ def logout_user():
     from src.config.supabase_client import sign_out
     sign_out()
 
-    # localStorage 자동 로그인 정보 삭제
-    st.markdown("<script>localStorage.removeItem('vac_auth');</script>", unsafe_allow_html=True)
-    st.query_params.clear()
+    # 쿠키 삭제
+    for _k in ["v_uid", "v_ue", "v_un", "v_ur"]:
+        _cm.delete(_k)
 
     for key in ["authenticated", "user_id", "user_email", "user_name", "user_role"]:
         if key in st.session_state:
