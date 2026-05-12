@@ -300,12 +300,13 @@ def _manage_cookies():
         _cm.set("v_ur",  st.session_state["user_role"],  expires_at=_exp, key="ck_s4")
         del st.session_state["_do_save_cookie"]
 
-    # 로그아웃 후 쿠키 삭제
+    # 로그아웃 후 쿠키 삭제 (없는 쿠키는 무시)
     elif st.session_state.get("_do_clear_cookie"):
-        _cm.delete("v_uid", key="ck_d1")
-        _cm.delete("v_ue",  key="ck_d2")
-        _cm.delete("v_un",  key="ck_d3")
-        _cm.delete("v_ur",  key="ck_d4")
+        for _ck, _key in [("v_uid","ck_d1"),("v_ue","ck_d2"),("v_un","ck_d3"),("v_ur","ck_d4")]:
+            try:
+                _cm.delete(_ck, key=_key)
+            except Exception:
+                pass
         del st.session_state["_do_clear_cookie"]
 
     # 인증 안 됐으면 쿠키에서 복원 시도
