@@ -187,7 +187,7 @@ def run_optimization(vacation: Vacation) -> OptimizationResult:
                 prob += pulp.lpSum([
                     x[get_tid(t)][d][slot] for t in teachers
                     if get_tid(t) != flash_teacher_id
-                ]) <= required
+                ]) == required
 
         # 4-5. 반짝선생님은 해당 슬롯에 배정되지 않음
         for (d, slot_am_pm), flash_tid in input_data.flash_teachers.items():
