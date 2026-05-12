@@ -448,7 +448,7 @@ def render_calendar_page(
         r2c1, r2c2 = st.columns(2)
         col1, col2, col3, col4 = r1c1, r1c2, r2c1, r2c2
     else:
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2.5])
 
     with col1:
         if show_teacher_filter:
