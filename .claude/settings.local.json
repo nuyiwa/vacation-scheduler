@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip install *)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import streamlit, supabase, pulp, pandas\")",
+      "Bash(python3 -m streamlit run app.py --server.port 8501)",
+      "Bash(kill 75665)",
+      "Bash(echo \"exit: $?\")",
+      "Read(//private/tmp/**)"
+    ]
+  }
+}

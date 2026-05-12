@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c \"import sys,json; users=json.load\\(sys.stdin\\).get\\('users',[]\\); [print\\(u.get\\('email'\\), u.get\\('id'\\)[:8]\\) for u in users]\")",
+      "Bash(python3 -)",
+      "Bash(awk '{print $6,$7,$8,$9}')",
+      "Bash(sed -n '30,36p' /Users/jeongseol/Desktop/vacation/src/pages/history.py)",
+      "Bash(sed -n '35,41p' /Users/jeongseol/Desktop/vacation/src/pages/teacher.py)",
+      "Bash(ipconfig getifaddr *)",
+      "Bash(git init *)",
+      "Bash(git add *)"
+    ]
+  }
+}
