@@ -61,26 +61,41 @@ st.markdown("""
     /* ===== Streamlit 기본 UI 제거 ===== */
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
-    header {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
     [data-testid="stToolbar"] {display: none !important;}
+    #MainMenu {visibility: hidden !important;}
+    footer {visibility: hidden !important;}
 
-    /* 사이드바 항상 열림 고정 */
-    [data-testid="stSidebar"] {
-        display: block !important;
-        transform: translateX(0) !important;
-        width: 18rem !important;
-        min-width: 18rem !important;
+    /* ===== PC: 헤더 숨기고 사이드바 항상 열림 고정 ===== */
+    @media (min-width: 769px) {
+        header {display: none !important;}
+        [data-testid="stSidebar"] {
+            display: block !important;
+            transform: translateX(0) !important;
+            width: 18rem !important;
+            min-width: 18rem !important;
+        }
+        [data-testid="stSidebarContent"],
+        [data-testid="stSidebar"] > div {
+            width: 18rem !important;
+            min-width: 18rem !important;
+        }
+        [data-testid="stSidebarCollapseButton"] {display: none !important;}
+        [data-testid="stSidebarCollapsedControl"] {display: none !important;}
     }
-    [data-testid="stSidebarContent"],
-    [data-testid="stSidebar"] > div {
-        width: 18rem !important;
-        min-width: 18rem !important;
-        overflow: visible !important;
+
+    /* ===== 모바일: 헤더 유지(햄버거 버튼용), 사이드바 기본 동작 ===== */
+    @media (max-width: 768px) {
+        header {
+            background-color: #4A90D9 !important;
+            box-shadow: none !important;
+        }
+        [data-testid="stSidebarCollapseButton"] button,
+        button[kind="header"] {
+            color: white !important;
+        }
     }
-    [data-testid="stSidebarCollapseButton"] {display: none !important;}
-    [data-testid="stSidebarCollapsedControl"] {display: none !important;}
 
     /* ===== 전체 배경 ===== */
     html, body, [data-testid="stAppViewContainer"] {
