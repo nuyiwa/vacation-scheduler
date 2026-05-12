@@ -577,24 +577,37 @@ def _nav_pages() -> list:
 
 
 def render_topnav():
-    """상단 내비게이션 바 — 한 줄 고정"""
+    """상단 내비게이션 — 라디오 버튼 한 줄"""
     current = st.session_state.get("current_page", "home")
-    pages = _nav_pages()
+    role = st.session_state.get("user_role", "teacher")
 
-    # use_container_width 없이 → 버튼이 텍스트 크기만큼만 차지
-    cols = st.columns(len(pages) + 1)
-    for i, (icon, label, key) in enumerate(pages):
-        with cols[i]:
-            if st.button(
-                f"{icon} {label}",
-                key=f"topnav_{key}",
-                type="primary" if current == key else "secondary",
-            ):
-                st.session_state["current_page"] = key
-                st.rerun()
-    with cols[-1]:
+    page_map = {"🏠 홈": "home", "📚 이력": "history"}
+    if role == "admin":
+        page_map["🔧 관리자"] = "admin"
+    else:
+        page_map["👨‍🏫 내 페이지"] = "teacher"
+
+    labels = list(page_map.keys())
+    keys = list(page_map.values())
+    current_idx = keys.index(current) if current in keys else 0
+
+    nav_col, logout_col = st.columns([9, 1])
+    with nav_col:
+        selected = st.radio(
+            "nav",
+            labels,
+            index=current_idx,
+            horizontal=True,
+            label_visibility="collapsed",
+        )
+    with logout_col:
         if st.button("🚪", key="topnav_logout"):
             logout_user()
+
+    selected_page = page_map[selected]
+    if selected_page != current:
+        st.session_state["current_page"] = selected_page
+        st.rerun()
 
     st.markdown("<hr style='margin:0.25rem 0 1rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
 
