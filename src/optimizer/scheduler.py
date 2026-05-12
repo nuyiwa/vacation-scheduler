@@ -429,6 +429,33 @@ def _collect_input_data(vacation: Vacation) -> OptimizationInput:
             input_data.meeting_weeks.add(d)
             d += timedelta(days=1)
     
+    # --- 돌봄 포인트 자동 계산 ---
+    # 총 돌봄 필요 횟수 = 각 working_day의 (오전 필요인원 + 오후 필요인원) 합계
+    # 단, 반짝선생님이 배정된 슬롯은 제외
+    total_care_slots = 0
+    for (d, slot_type), required in input_data.care_requirements.items():
+        if d not in input_data.working_days:
+            continue
+        flash_key = (d, slot_type)
+        if flash_key in input_data.flash_teachers:
+            # 반짝선생님이 커버하는 슬롯은 교사 돌봄에서 제외
+            total_care_slots += max(0, required - 1)
+        else:
+            total_care_slots += required
+    
+    # 총 돌봄 포인트를 7명의 교사에게 골고루 분배
+    num_teachers = len(teachers_data)
+    if num_teachers > 0 and total_care_slots > 0:
+        base = total_care_slots // num_teachers
+        remainder = total_care_slots % num_teachers
+        
+        for i, t in enumerate(teachers_data):
+            care_pts = base + (1 if i < remainder else 0)
+            if isinstance(t, dict):
+                t["care_points"] = care_pts
+            else:
+                t.care_points = care_pts
+    
     return input_data
 
 
