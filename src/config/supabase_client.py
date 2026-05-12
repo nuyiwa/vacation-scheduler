@@ -388,7 +388,7 @@ def insert_record(table_name: str, data: dict) -> dict | None:
     return response.data[0] if response.data else None
 
 
-def upsert_record(table_name: str, data: dict, eq: dict = None) -> dict | None:
+def upsert_record(table_name: str, data: dict, eq: dict = None, on_conflict: str = None) -> dict | None:
     """
     Supabase 테이블에 UPSERT (있으면 업데이트, 없으면 삽입)
     데모 모드 지원
@@ -397,6 +397,7 @@ def upsert_record(table_name: str, data: dict, eq: dict = None) -> dict | None:
         table_name: 테이블명
         data: 저장할 데이터
         eq: 업데이트 조건 (데모 모드에서 사용)
+        on_conflict: 충돌 해결에 사용할 컬럼명 (예: "vacation_id,date")
     
     Returns:
         dict | None: 저장된 레코드 또는 None
@@ -410,8 +411,37 @@ def upsert_record(table_name: str, data: dict, eq: dict = None) -> dict | None:
         return _demo_insert(table_name, data)
     
     supabase = get_supabase_client()
-    response = supabase.table(table_name).upsert(data).execute()
-    return response.data[0] if response.data else None
+    # on_conflict가 제공되면 Supabase upsert 사용 (먼저 시도)
+    if on_conflict:
+        try:
+            response = supabase.table(table_name).upsert(data, on_conflict=on_conflict).execute()
+            return response.data[0] if response.data else None
+        except Exception:
+            # upsert 실패 시 조회 후 업데이트/삽입으로 fallback
+            pass
+    
+    # on_conflict가 없거나 upsert 실패 시: 조회 후 업데이트/삽입
+    if eq:
+        query = supabase.table(table_name).select("*")
+        for key, value in eq.items():
+            query = query.eq(key, value)
+        response = query.execute()
+        existing = response.data if response.data else []
+        if existing:
+            # 업데이트
+            update_query = supabase.table(table_name).update(data)
+            for key, value in eq.items():
+                update_query = update_query.eq(key, value)
+            update_response = update_query.execute()
+            return update_response.data[0] if update_response.data else None
+        else:
+            # 삽입
+            insert_response = supabase.table(table_name).insert(data).execute()
+            return insert_response.data[0] if insert_response.data else None
+    else:
+        # eq가 없으면 그냥 insert
+        response = supabase.table(table_name).insert(data).execute()
+        return response.data[0] if response.data else None
 
 
 def update_record(table_name: str, data: dict, eq: dict) -> dict | None:

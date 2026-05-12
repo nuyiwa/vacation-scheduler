@@ -221,7 +221,13 @@ def add_teacher_to_vacation(vacation_id: str, teacher_id: str) -> bool:
             "vacation_points": 0,
             "carry_over_points": 0
         }
-        result = insert_record("vacation_teachers", data)
+        # upsert_record 사용 (조회 후 있으면 업데이트, 없으면 삽입)
+        result = upsert_record("vacation_teachers", data, {
+            "vacation_id": vacation_id,
+            "teacher_id": teacher_id
+        })
+        if result:
+            clear_vacation_cache()
         return result is not None
     except Exception as e:
         _handle_error(e, "교사 추가")
@@ -432,7 +438,7 @@ def get_flash_teachers(vacation_id: str) -> List[FlashTeacher]:
 
 
 def add_flash_teacher(vacation_id: str, date_val: date, slot_type: str, teacher_id: str) -> bool:
-    """반짝선생님 등록"""
+    """반짝선생님 등록 (UPSERT)"""
     try:
         data = {
             "vacation_id": vacation_id,
@@ -440,7 +446,12 @@ def add_flash_teacher(vacation_id: str, date_val: date, slot_type: str, teacher_
             "date": date_val.isoformat(),
             "slot_type": slot_type
         }
-        result = insert_record("flash_teachers", data)
+        result = upsert_record("flash_teachers", data, {
+            "vacation_id": vacation_id,
+            "teacher_id": teacher_id,
+            "date": date_val.isoformat(),
+            "slot_type": slot_type
+        }, on_conflict="vacation_id,teacher_id,date,slot_type")
         return result is not None
     except Exception as e:
         _handle_error(e, "반짝선생님 등록")
@@ -474,13 +485,21 @@ def get_excluded_dates(vacation_id: str) -> List[ExcludedDate]:
 def add_excluded_date(vacation_id: str, date_val: date, reason: str, is_holiday: bool = True, time_scope: str = "full") -> bool:
     """제외일 추가 (오전/오후/종일 선택 가능)"""
     try:
+        date_str = date_val.isoformat() if hasattr(date_val, 'isoformat') else date_val
         data = {
             "vacation_id": vacation_id,
-            "date": date_val.isoformat(),
+            "date": date_str,
             "reason": reason,
             "is_holiday": is_holiday,
+            "time_scope": time_scope,
         }
-        result = insert_record("excluded_dates", data)
+        # upsert_record 사용 (조회 후 있으면 업데이트, 없으면 삽입)
+        result = upsert_record("excluded_dates", data, {
+            "vacation_id": vacation_id,
+            "date": date_str
+        })
+        if result:
+            clear_vacation_cache()
         return result is not None
     except Exception as e:
         _handle_error(e, "제외일 추가")
@@ -490,7 +509,10 @@ def add_excluded_date(vacation_id: str, date_val: date, reason: str, is_holiday:
 def remove_excluded_date(excluded_id: str) -> bool:
     """제외일 삭제"""
     try:
-        return delete_record("excluded_dates", {"id": excluded_id})
+        result = delete_record("excluded_dates", {"id": excluded_id})
+        if result:
+            clear_vacation_cache()
+        return result
     except Exception as e:
         _handle_error(e, "제외일 삭제")
         return False
@@ -512,14 +534,17 @@ def get_meeting_weeks(vacation_id: str) -> List[MeetingWeek]:
 
 
 def add_meeting_week(vacation_id: str, week_start: date, week_end: date) -> bool:
-    """회의 주간 추가"""
+    """회의 주간 추가 (UPSERT)"""
     try:
         data = {
             "vacation_id": vacation_id,
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat()
         }
-        result = insert_record("meeting_weeks", data)
+        result = upsert_record("meeting_weeks", data, {
+            "vacation_id": vacation_id,
+            "week_start": week_start.isoformat()
+        }, on_conflict="vacation_id,week_start")
         return result is not None
     except Exception as e:
         _handle_error(e, "회의 주간 추가")
