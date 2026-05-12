@@ -8,7 +8,15 @@
       "Bash(sed -n '35,41p' /Users/jeongseol/Desktop/vacation/src/pages/teacher.py)",
       "Bash(ipconfig getifaddr *)",
       "Bash(git init *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git remote *)",
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(gh auth *)",
+      "Bash(git -C /Users/jeongseol/Desktop/vacation branch -a)",
+      "Bash(gh repo *)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import sys,json; [print\\(b['name']\\) for b in json.load\\(sys.stdin\\)]\")"
     ]
   }
 }

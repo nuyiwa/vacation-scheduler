@@ -90,12 +90,13 @@ class FlashTeacher(BaseModel):
 # 제외일
 # ============================================================
 class ExcludedDate(BaseModel):
-    """휴일/제외일: 해당 날짜 전체 슬롯 제외"""
+    """휴일/제외일: 해당 날짜의 특정 시간대 슬롯 제외"""
     id: Optional[str] = None
     vacation_id: str
     date: date
     reason: str
     is_holiday: bool = True
+    time_scope: str = "ALL"  # "AM" | "PM" | "ALL"
     created_at: Optional[datetime] = None
 
 

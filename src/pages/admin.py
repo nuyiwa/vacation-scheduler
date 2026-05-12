@@ -603,9 +603,15 @@ def _render_excluded_dates_tab(vacation: Vacation):
                                     min_value=vacation.start_date, max_value=vacation.end_date)
             ex_reason = st.text_input("사유", placeholder="개교기념일")
             ex_is_holiday = st.checkbox("공휴일", value=True)
+            ex_time_scope = st.selectbox(
+                "적용 시간",
+                options=["ALL", "AM", "PM"],
+                format_func=lambda x: {"ALL": "종일", "AM": "오전", "PM": "오후"}[x],
+                index=0
+            )
 
             if st.form_submit_button("추가", use_container_width=True):
-                if add_excluded_date(vacation.id, ex_date, ex_reason, ex_is_holiday):
+                if add_excluded_date(vacation.id, ex_date, ex_reason, ex_is_holiday, ex_time_scope):
                     st.success(f"✅ {ex_date} 제외일이 추가되었습니다.")
                     st.rerun()
                 else:
