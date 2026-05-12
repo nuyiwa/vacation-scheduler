@@ -282,6 +282,51 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ============================================================
+# 자동 로그인 — localStorage → query_param → session_state 복원
+# ============================================================
+import json, base64 as _b64
+
+def _encode_auth(uid, ue, un, ur):
+    return _b64.b64encode(json.dumps({"uid":uid,"ue":ue,"un":un,"ur":ur}).encode()).decode()
+
+def _decode_auth(encoded):
+    d = json.loads(_b64.b64decode(encoded).decode())
+    return d["uid"], d["ue"], d["un"], d["ur"]
+
+# 1) localStorage → query_param 감지 JS
+st.markdown("""
+<script>
+(function(){
+    var params = new URLSearchParams(window.location.search);
+    var au = params.get('_a');
+    if(au){
+        localStorage.setItem('vac_auth', au);
+    } else {
+        var stored = localStorage.getItem('vac_auth');
+        if(stored){
+            params.set('_a', stored);
+            window.location.search = params.toString();
+        }
+    }
+})();
+</script>
+""", unsafe_allow_html=True)
+
+# 2) query_param → session_state 복원
+_au = st.query_params.get("_a", None)
+if _au and not st.session_state.get("authenticated"):
+    try:
+        uid, ue, un, ur = _decode_auth(_au)
+        st.session_state.update({
+            "authenticated": True,
+            "user_id": uid, "user_email": ue,
+            "user_name": un, "user_role": ur,
+            "current_page": "home",
+        })
+    except Exception:
+        pass
+
+# ============================================================
 # 세션 상태 초기화
 # ============================================================
 if "authenticated" not in st.session_state:
@@ -368,6 +413,13 @@ def login_user(email: str, password: str) -> bool:
                 st.session_state["user_name"] = profile.get("name", email)
                 st.session_state["user_role"] = profile.get("role", "teacher")
 
+            # 자동 로그인용 — query_param에 저장 (JS가 localStorage에 동기화)
+            st.query_params["_a"] = _encode_auth(
+                st.session_state["user_id"],
+                st.session_state["user_email"],
+                st.session_state["user_name"],
+                st.session_state["user_role"],
+            )
             return True
         else:
             error_msg = response.get("error", "로그인에 실패했습니다.")
@@ -382,12 +434,15 @@ def logout_user():
     """로그아웃"""
     from src.config.supabase_client import sign_out
     sign_out()
-    
-    # 세션 상태 초기화
+
+    # localStorage 자동 로그인 정보 삭제
+    st.markdown("<script>localStorage.removeItem('vac_auth');</script>", unsafe_allow_html=True)
+    st.query_params.clear()
+
     for key in ["authenticated", "user_id", "user_email", "user_name", "user_role"]:
         if key in st.session_state:
             del st.session_state[key]
-    
+
     st.rerun()
 
 
