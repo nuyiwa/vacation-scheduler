@@ -591,18 +591,13 @@ def render_topnav():
     keys = list(page_map.values())
     current_idx = keys.index(current) if current in keys else 0
 
-    nav_col, logout_col = st.columns([9, 1])
-    with nav_col:
-        selected = st.radio(
-            "nav",
-            labels,
-            index=current_idx,
-            horizontal=True,
-            label_visibility="collapsed",
-        )
-    with logout_col:
-        if st.button("🚪", key="topnav_logout"):
-            logout_user()
+    selected = st.radio(
+        "nav",
+        labels,
+        index=current_idx,
+        horizontal=True,
+        label_visibility="collapsed",
+    )
 
     selected_page = page_map[selected]
     if selected_page != current:
@@ -687,6 +682,11 @@ def main():
     elif current_page == "history":
         from src.pages.history import render_history_page
         render_history_page()
+
+    # 하단 로그아웃
+    st.markdown("<hr style='margin:2rem 0 0.5rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
+    if st.button("🚪 로그아웃", key="bottom_logout"):
+        logout_user()
 
 
 # ============================================================
