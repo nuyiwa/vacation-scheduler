@@ -58,54 +58,23 @@ st.markdown("""
 <meta name="theme-color" content="#4A90D9">
 <meta name="mobile-web-app-capable" content="yes">
 <style>
-    /* ===== Streamlit 기본 UI 제거 ===== */
+    /* ===== Streamlit 기본 UI 완전 제거 ===== */
     #MainMenu {visibility: hidden !important;}
     footer {visibility: hidden !important;}
+    header {display: none !important;}
     [data-testid="stDecoration"] {display: none !important;}
     [data-testid="stStatusWidget"] {display: none !important;}
     [data-testid="stToolbar"] {display: none !important;}
-    #MainMenu {visibility: hidden !important;}
-    footer {visibility: hidden !important;}
-
-    /* ===== PC: 헤더 숨기고 사이드바 항상 열림 고정 ===== */
-    @media (min-width: 769px) {
-        header {display: none !important;}
-        [data-testid="stSidebar"] {
-            display: block !important;
-            transform: translateX(0) !important;
-            width: 18rem !important;
-            min-width: 18rem !important;
-        }
-        [data-testid="stSidebarContent"],
-        [data-testid="stSidebar"] > div {
-            width: 18rem !important;
-            min-width: 18rem !important;
-        }
-        [data-testid="stSidebarCollapseButton"] {display: none !important;}
-        [data-testid="stSidebarCollapsedControl"] {display: none !important;}
-    }
-
-    /* ===== 모바일: 헤더 유지(햄버거 버튼용), 사이드바 기본 동작 ===== */
-    @media (max-width: 768px) {
-        header {
-            background-color: #4A90D9 !important;
-            box-shadow: none !important;
-        }
-        [data-testid="stSidebarCollapseButton"] button,
-        button[kind="header"] {
-            color: white !important;
-        }
-    }
+    [data-testid="stSidebar"] {display: none !important;}
 
     /* ===== 전체 배경 ===== */
     html, body, [data-testid="stAppViewContainer"] {
         background-color: #F0F4F8 !important;
     }
-    /* PC: 넓게 사용, 헤더 제거로 패딩 최소화 */
     .block-container {
-        padding-top: 1.5rem !important;
+        padding-top: 0.5rem !important;
         padding-bottom: 2rem !important;
-        max-width: 1200px !important;
+        max-width: 1100px !important;
     }
 
     /* ===== 버튼 ===== */
@@ -614,14 +583,20 @@ def _nav_pages() -> list:
 
 
 def render_topnav():
-    """PC 전용 상단 네비게이션"""
+    """상단 내비게이션 (모바일/PC 공통)"""
     current = st.session_state.get("current_page", "home")
+    name = st.session_state.get("user_name", "")
     pages = _nav_pages()
 
-    st.markdown('<div class="topnav-desktop">', unsafe_allow_html=True)
-    cols = st.columns(len(pages) + 1)
-    for i, (icon, label, page_key) in enumerate(pages):
-        with cols[i]:
+    # 사용자 이름 + 내비 버튼 + 로그아웃
+    info_col, *nav_cols, logout_col = st.columns([2] + [1] * len(pages) + [1])
+    with info_col:
+        st.markdown(
+            f"<div style='padding:0.4rem 0;font-weight:700;color:#1a2e45;'>🏫 {name}</div>",
+            unsafe_allow_html=True,
+        )
+    for col, (icon, label, page_key) in zip(nav_cols, pages):
+        with col:
             if st.button(
                 f"{icon} {label}",
                 key=f"topnav_{page_key}",
@@ -630,11 +605,11 @@ def render_topnav():
             ):
                 st.session_state["current_page"] = page_key
                 st.rerun()
-    with cols[-1]:
-        if st.button("🚪 로그아웃", key="topnav_logout", use_container_width=True):
+    with logout_col:
+        if st.button("🚪", key="topnav_logout", use_container_width=True):
             logout_user()
-    st.markdown('</div>', unsafe_allow_html=True)
-    st.markdown("<hr style='margin:0.5rem 0 1rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
+
+    st.markdown("<hr style='margin:0.25rem 0 1rem;border:none;border-top:1px solid #e8ecf0;'>", unsafe_allow_html=True)
 
 
 def render_bottomnav():
@@ -677,8 +652,8 @@ def main():
         render_login_page()
         return
     
-    # 사이드바 항상 렌더링 (CSS가 모바일에서 자동 숨김)
-    render_sidebar()
+    # 상단 내비게이션 버튼 (모바일/PC 공통)
+    render_topnav()
 
     # ============================================================
     # 페이지 라우팅
