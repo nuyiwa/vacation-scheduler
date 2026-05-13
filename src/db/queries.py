@@ -815,7 +815,7 @@ def get_admin_requests(teacher_id: str, vacation_id: str) -> List[AdminRequest]:
 def save_admin_request(request: AdminRequest) -> bool:
     """행정 신청 저장 (UPSERT) - RLS 우회 (service_role)"""
     try:
-        from src.config.supabase_client import get_service_client, get_supabase_client, is_demo_mode
+        from src.config.supabase_client import get_service_client, is_demo_mode
 
         data = request.model_dump(exclude={"id", "created_at", "updated_at"}, exclude_none=True, mode="json")
         date_str = data["date"]
@@ -830,9 +830,10 @@ def save_admin_request(request: AdminRequest) -> bool:
             })
             return result is not None
 
-        # 서비스 롤 클라이언트로 RLS 우회
-        client = get_service_client() or get_supabase_client()
+        # 서비스 롤 클라이언트로 RLS 우회 (service_role 키가 없으면 None 반환)
+        client = get_service_client()
         if not client:
+            st.error("❌ 서비스 롤 키가 설정되지 않았습니다. .env 파일에 SUPABASE_SERVICE_KEY를 설정해주세요.")
             return False
 
         # UPSERT: on_conflict 사용
@@ -849,13 +850,14 @@ def save_admin_request(request: AdminRequest) -> bool:
 def delete_admin_request(request_id: str) -> bool:
     """행정 신청 삭제 - RLS 우회 (service_role)"""
     try:
-        from src.config.supabase_client import get_service_client, get_supabase_client, is_demo_mode
+        from src.config.supabase_client import get_service_client, is_demo_mode
 
         if is_demo_mode():
             return delete_record("admin_requests", {"id": request_id})
 
-        client = get_service_client() or get_supabase_client()
+        client = get_service_client()
         if not client:
+            st.error("❌ 서비스 롤 키가 설정되지 않았습니다. .env 파일에 SUPABASE_SERVICE_KEY를 설정해주세요.")
             return False
 
         response = client.table("admin_requests").delete().eq("id", request_id).execute()
