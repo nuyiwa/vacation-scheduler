@@ -813,26 +813,53 @@ def get_admin_requests(teacher_id: str, vacation_id: str) -> List[AdminRequest]:
 
 
 def save_admin_request(request: AdminRequest) -> bool:
-    """행정 신청 저장 (UPSERT)"""
+    """행정 신청 저장 (UPSERT) - RLS 우회 (service_role)"""
     try:
+        from src.config.supabase_client import get_service_client, get_supabase_client, is_demo_mode
+
         data = request.model_dump(exclude={"id", "created_at", "updated_at"}, exclude_none=True, mode="json")
         date_str = data["date"]
-        result = upsert_record("admin_requests", data, {
-            "teacher_id": request.teacher_id,
-            "vacation_id": request.vacation_id,
-            "date": date_str,
-            "slot_type": request.slot_type
-        })
-        return result is not None
+
+        if is_demo_mode():
+            # 데모 모드: 기존 upsert_record 사용
+            result = upsert_record("admin_requests", data, {
+                "teacher_id": request.teacher_id,
+                "vacation_id": request.vacation_id,
+                "date": date_str,
+                "slot_type": request.slot_type
+            })
+            return result is not None
+
+        # 서비스 롤 클라이언트로 RLS 우회
+        client = get_service_client() or get_supabase_client()
+        if not client:
+            return False
+
+        # UPSERT: on_conflict 사용
+        response = client.table("admin_requests").upsert(
+            data,
+            on_conflict="teacher_id,vacation_id,date,slot_type"
+        ).execute()
+        return response.data is not None and len(response.data) > 0
     except Exception as e:
         _handle_error(e, "행정 신청 저장")
         return False
 
 
 def delete_admin_request(request_id: str) -> bool:
-    """행정 신청 삭제"""
+    """행정 신청 삭제 - RLS 우회 (service_role)"""
     try:
-        return delete_record("admin_requests", {"id": request_id})
+        from src.config.supabase_client import get_service_client, get_supabase_client, is_demo_mode
+
+        if is_demo_mode():
+            return delete_record("admin_requests", {"id": request_id})
+
+        client = get_service_client() or get_supabase_client()
+        if not client:
+            return False
+
+        response = client.table("admin_requests").delete().eq("id", request_id).execute()
+        return response.data is not None and len(response.data) > 0
     except Exception as e:
         _handle_error(e, "행정 신청 삭제")
         return False

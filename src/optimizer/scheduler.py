@@ -42,7 +42,8 @@ class OptimizationInput:
         self.vacation_requests: Dict[str, List[VacationRequest]] = {}  # 교사ID -> 휴가신청 목록
         self.preferences: Dict[str, TeacherPreference] = {}  # 교사ID -> 선호도
         self.meeting_weeks: Set[date] = set()  # 회의 주간 날짜
-        self.excluded_dates: Set[date] = set()  # 제외일
+        self.excluded_dates: Dict[date, str] = {}  # 제외일: date -> time_scope ("ALL" | "AM" | "PM")
+        self.excluded_dates_set: Set[date] = set()  # ALL 제외일만 모은 set (working_days 계산용)
 
 
 # ============================================================
@@ -221,13 +222,29 @@ def run_optimization(vacation: Vacation) -> OptimizationResult:
                     x[get_tid(t)][d]["PM_Childcare"] for t in teachers
                 ]) == 0
 
-        # 4-8. 제외일: 모든 슬롯 배정 불가 (working_days에서 이미 제외되지만 안전장치)
-        for d in input_data.excluded_dates:
-            if d in days:
+        # 4-8. 제외일: time_scope에 따라 해당 슬롯 배정 불가
+        # (working_days에서 ALL 제외일은 이미 제외되지만, AM/PM 제외일은 여기서 처리)
+        for d, scope in input_data.excluded_dates.items():
+            if d not in days:
+                continue
+            if scope == "ALL":
+                # ALL은 working_days에서 이미 제외됨 (안전장치)
                 for t in teachers:
                     tid = get_tid(t)
                     for s in slot_types:
                         prob += x[tid][d][s] == 0
+            elif scope == "AM":
+                # 오전 슬롯만 제외
+                for t in teachers:
+                    tid = get_tid(t)
+                    prob += x[tid][d]["AM_Childcare"] == 0
+                    prob += x[tid][d]["AM_Admin"] == 0
+            elif scope == "PM":
+                # 오후 슬롯만 제외
+                for t in teachers:
+                    tid = get_tid(t)
+                    prob += x[tid][d]["PM_Childcare"] == 0
+                    prob += x[tid][d]["PM_Admin"] == 0
         
         # ============================================================
         # 5. Soft Constraints (목적 함수 - 선호도 최대화)
@@ -375,21 +392,26 @@ def _collect_input_data(vacation: Vacation) -> OptimizationInput:
     teachers_data = get_vacation_teachers(vacation.id)
     input_data.teachers = teachers_data
     
-    # 제외일 (공휴일 + 학교 휴일)
+    # 제외일 (공휴일 + 학교 휴일) - time_scope 정보 포함
     excluded = get_excluded_dates(vacation.id)
-    input_data.excluded_dates = {e.date for e in excluded}
+    for e in excluded:
+        e_date = e.date if hasattr(e, 'date') else e.get("date")
+        e_scope = e.time_scope if hasattr(e, 'time_scope') else e.get("time_scope", "ALL")
+        input_data.excluded_dates[e_date] = e_scope
     
-    # 한국 공휴일 추가
+    # 한국 공휴일 추가 (ALL로 간주)
     for y in range(vacation.start_date.year, vacation.end_date.year + 1):
         for h in get_korean_holidays(y):
             if vacation.start_date <= h <= vacation.end_date:
-                input_data.excluded_dates.add(h)
+                input_data.excluded_dates[h] = "ALL"
     
-    # 근무 가능한 날짜
+    # 근무 가능한 날짜: time_scope="ALL"인 날짜만 제외
+    all_excluded = {d for d, scope in input_data.excluded_dates.items() if scope == "ALL"}
+    input_data.excluded_dates_set = all_excluded
     input_data.working_days = get_working_days(
         vacation.start_date,
         vacation.end_date,
-        input_data.excluded_dates
+        all_excluded
     )
     
     # 돌봄 필요 인원
@@ -632,9 +654,15 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
         # 각 날짜의 AM/PM에 대해 필요한 돌봄 인원과 현재 배정된 인원 계산
         for d in days:
             for slot_am_pm in ["AM", "PM"]:
-                # 제외일/회의주간 체크
-                if d in input_data.excluded_dates:
+                # 제외일 체크 (time_scope 고려)
+                excluded_scope = input_data.excluded_dates.get(d)
+                if excluded_scope == "ALL":
                     continue
+                if excluded_scope == "AM" and slot_am_pm == "AM":
+                    continue
+                if excluded_scope == "PM" and slot_am_pm == "PM":
+                    continue
+                # 회의주간 체크
                 if slot_am_pm == "PM" and d in input_data.meeting_weeks:
                     continue
                 
@@ -709,7 +737,16 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
         # 4-3. 남은 포인트를 행정 슬롯으로 채우기
         for d in days:
             for slot_am_pm in ["AM", "PM"]:
-                if d in input_data.excluded_dates:
+                # 제외일 체크 (time_scope 고려)
+                excluded_scope = input_data.excluded_dates.get(d)
+                if excluded_scope == "ALL":
+                    continue
+                if excluded_scope == "AM" and slot_am_pm == "AM":
+                    continue
+                if excluded_scope == "PM" and slot_am_pm == "PM":
+                    continue
+                # 회의주간 체크
+                if slot_am_pm == "PM" and d in input_data.meeting_weeks:
                     continue
                 
                 slot_key = f"{slot_am_pm}_Admin"
