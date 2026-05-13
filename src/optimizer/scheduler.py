@@ -180,20 +180,19 @@ def run_optimization(vacation: Vacation) -> OptimizationResult:
                 continue
 
             flash_key = (d, slot_am_pm)
-            flash_teacher_id = input_data.flash_teachers.get(flash_key)
-            if flash_teacher_id:
+            if flash_key in input_data.flash_teachers:
                 required = max(0, required - 1)
 
             if required > 0:
                 prob += pulp.lpSum([
                     x[get_tid(t)][d][slot] for t in teachers
-                    if get_tid(t) != flash_teacher_id
+                    if flash_key not in input_data.flash_teachers or get_tid(t) != input_data.flash_teachers.get(flash_key)
                 ]) == required
 
         # 4-5. 반짝선생님은 해당 슬롯에 배정되지 않음
         for (d, slot_am_pm), flash_tid in input_data.flash_teachers.items():
             slot = f"{slot_am_pm}_Childcare"
-            if slot in slot_types and d in days and flash_tid in x:
+            if slot in slot_types and d in days and flash_tid and flash_tid in x:
                 prob += x[flash_tid][d][slot] == 0
 
         # 4-6. 휴가 신청한 날짜는 해당 슬롯 배정 불가
@@ -648,10 +647,9 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                 # 돌봄 필요 인원
                 required = input_data.care_requirements.get((d, slot_am_pm), 0)
                 
-                # 반짝선생님 체크
+                # 반짝선생님 체크 (teacher_id가 None이어도 키 존재 자체로 체크)
                 flash_key = (d, slot_am_pm)
-                flash_tid = input_data.flash_teachers.get(flash_key)
-                if flash_tid:
+                if flash_key in input_data.flash_teachers:
                     required = max(0, required - 1)
                 
                 if required <= 0:
@@ -691,8 +689,9 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                        fixed_assignments[(d, f"{slot_am_pm}_Vacation")] == tid:
                         continue
                     
-                    # 반짝선생님인 경우 제외
-                    if flash_tid == tid:
+                    # 반짝선생님인 경우 제외 (teacher_id가 교사 목록에 있을 수 있으므로)
+                    flash_tid = input_data.flash_teachers.get(flash_key)
+                    if flash_tid and flash_tid == tid:
                         continue
                     
                     available_teachers.append(t)
