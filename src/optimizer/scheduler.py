@@ -451,33 +451,6 @@ def _collect_input_data(vacation: Vacation) -> OptimizationInput:
             input_data.meeting_weeks.add(d)
             d += timedelta(days=1)
     
-    # --- 돌봄 포인트 자동 계산 ---
-    # 총 돌봄 필요 횟수 = 각 working_day의 (오전 필요인원 + 오후 필요인원) 합계
-    # 단, 반짝선생님이 배정된 슬롯은 제외
-    total_care_slots = 0
-    for (d, slot_type), required in input_data.care_requirements.items():
-        if d not in input_data.working_days:
-            continue
-        flash_key = (d, slot_type)
-        if flash_key in input_data.flash_teachers:
-            # 반짝선생님이 커버하는 슬롯은 교사 돌봄에서 제외
-            total_care_slots += max(0, required - 1)
-        else:
-            total_care_slots += required
-    
-    # 총 돌봄 포인트를 7명의 교사에게 골고루 분배
-    num_teachers = len(teachers_data)
-    if num_teachers > 0 and total_care_slots > 0:
-        base = total_care_slots // num_teachers
-        remainder = total_care_slots % num_teachers
-        
-        for i, t in enumerate(teachers_data):
-            care_pts = base + (1 if i < remainder else 0)
-            if isinstance(t, dict):
-                t["care_points"] = care_pts
-            else:
-                t.care_points = care_pts
-    
     return input_data
 
 
@@ -493,14 +466,20 @@ def _calculate_stats(schedules: List[Schedule], teachers: List[dict]) -> Dict:
         tname = t.get("teacher_name", "Unknown") if isinstance(t, dict) else "Unknown"
         
         teacher_schedules = [s for s in schedules if s.teacher_id == tid]
-        care_count = len([s for s in teacher_schedules if "Childcare" in s.slot_type])
-        admin_count = len([s for s in teacher_schedules if "Admin" in s.slot_type])
+        am_care_count = len([s for s in teacher_schedules if s.slot_type == "AM_Childcare"])
+        pm_care_count = len([s for s in teacher_schedules if s.slot_type == "PM_Childcare"])
+        am_admin_count = len([s for s in teacher_schedules if s.slot_type == "AM_Admin"])
+        pm_admin_count = len([s for s in teacher_schedules if s.slot_type == "PM_Admin"])
         
         stats["teacher_stats"][tid] = {
             "name": tname,
             "total": len(teacher_schedules),
-            "care": care_count,
-            "admin": admin_count,
+            "care": am_care_count + pm_care_count,
+            "admin": am_admin_count + pm_admin_count,
+            "am_care": am_care_count,
+            "pm_care": pm_care_count,
+            "am_admin": am_admin_count,
+            "pm_admin": pm_admin_count,
         }
     
     return stats
@@ -830,8 +809,10 @@ def render_optimization_preview(result: OptimizationResult):
         stats_data.append({
             "교사": tstat["name"],
             "총 배정": tstat["total"],
-            "돌봄": tstat["care"],
-            "행정": tstat["admin"],
+            "오전돌봄": tstat["am_care"],
+            "오후돌봄": tstat["pm_care"],
+            "오전행정": tstat["am_admin"],
+            "오후행정": tstat["pm_admin"],
         })
     
     if stats_data:
@@ -844,21 +825,25 @@ def render_optimization_preview(result: OptimizationResult):
     date_stats = {}
     for s in result.schedules:
         if s.date not in date_stats:
-            date_stats[s.date] = {"care": 0, "admin": 0, "total": 0}
+            date_stats[s.date] = {
+                "AM_Childcare": 0, "PM_Childcare": 0,
+                "AM_Admin": 0, "PM_Admin": 0,
+                "total": 0
+            }
         date_stats[s.date]["total"] += 1
-        if "Childcare" in s.slot_type:
-            date_stats[s.date]["care"] += 1
-        else:
-            date_stats[s.date]["admin"] += 1
+        if s.slot_type in date_stats[s.date]:
+            date_stats[s.date][s.slot_type] += 1
     
     date_data = []
     for d in sorted(date_stats.keys()):
         ds = date_stats[d]
         date_data.append({
             "날짜": d.strftime("%m/%d(%a)"),
-            "배정": ds["total"],
-            "돌봄": ds["care"],
-            "행정": ds["admin"],
+            "오전돌봄": ds["AM_Childcare"],
+            "오후돌봄": ds["PM_Childcare"],
+            "오전행정": ds["AM_Admin"],
+            "오후행정": ds["PM_Admin"],
+            "합계": ds["total"],
         })
     
     if date_data:
