@@ -834,6 +834,7 @@ def save_admin_request(request: AdminRequest) -> bool:
         client = get_service_client()
         if not client:
             st.error("❌ 서비스 롤 키가 설정되지 않았습니다. .env 파일에 SUPABASE_SERVICE_KEY를 설정해주세요.")
+            st.info("💡 Supabase SQL Editor에서 docs/11_fix_admin_requests_rls.sql을 실행하여 RLS를 비활성화할 수도 있습니다.")
             return False
 
         # UPSERT: on_conflict 사용
@@ -858,6 +859,7 @@ def delete_admin_request(request_id: str) -> bool:
         client = get_service_client()
         if not client:
             st.error("❌ 서비스 롤 키가 설정되지 않았습니다. .env 파일에 SUPABASE_SERVICE_KEY를 설정해주세요.")
+            st.info("💡 Supabase SQL Editor에서 docs/11_fix_admin_requests_rls.sql을 실행하여 RLS를 비활성화할 수도 있습니다.")
             return False
 
         response = client.table("admin_requests").delete().eq("id", request_id).execute()

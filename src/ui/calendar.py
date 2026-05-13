@@ -18,7 +18,8 @@ from src.config.settings import (
 from src.db.models import Schedule, Vacation, VacationRequest, AdminRequest
 from src.db.queries import (
     get_schedules, get_vacation_requests, get_admin_requests,
-    get_vacation_teachers, get_all_teachers
+    get_vacation_teachers, get_all_teachers,
+    get_flash_teachers, get_excluded_dates, get_meeting_weeks
 )
 
 
@@ -409,10 +410,11 @@ def render_calendar_page(
         except Exception:
             pass
     
-    # TODO: flash_teachers, excluded_dates, meeting_weeks 로드
-    flash_teachers = []
-    excluded_dates = set()
-    meeting_weeks = []
+    # flash_teachers, excluded_dates, meeting_weeks 로드
+    flash_teachers = get_flash_teachers(vacation.id)
+    excluded_dates_list = get_excluded_dates(vacation.id)
+    excluded_dates = set(e.date for e in excluded_dates_list)
+    meeting_weeks = get_meeting_weeks(vacation.id)
     
     # ============================================================
     # 보기 모드 상태 (세션별로 유지)

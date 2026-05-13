@@ -218,6 +218,7 @@ def _render_teacher_assignment():
     
     # 현재 배정된 교사 목록
     teachers = get_vacation_teachers(vacation_id)
+    schedules = get_schedules(vacation_id)
     
     col1, col2 = st.columns([3, 2])
     
@@ -227,19 +228,36 @@ def _render_teacher_assignment():
         if teachers:
             teacher_data = []
             for t in teachers:
+                tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
                 t_name = t.get("teacher_name", "Unknown") if isinstance(t, dict) else "Unknown"
                 t_care = t.get("care_points", 0) if isinstance(t, dict) else t.care_points
                 t_admin = t.get("admin_points", 0) if isinstance(t, dict) else t.admin_points
                 t_vacation = t.get("vacation_points", 0) if isinstance(t, dict) else t.vacation_points
                 t_carry = t.get("carry_over_points", 0) if isinstance(t, dict) else t.carry_over_points
 
+                # 실제 배정된 스케줄 기준 포인트 계산
+                t_schedules = [s for s in schedules if s.teacher_id == tid]
+                actual_care = len([s for s in t_schedules if "Childcare" in s.slot_type])
+                actual_admin = len([s for s in t_schedules if "Admin" in s.slot_type])
+                actual_am_care = len([s for s in t_schedules if s.slot_type == "AM_Childcare"])
+                actual_pm_care = len([s for s in t_schedules if s.slot_type == "PM_Childcare"])
+                actual_am_admin = len([s for s in t_schedules if s.slot_type == "AM_Admin"])
+                actual_pm_admin = len([s for s in t_schedules if s.slot_type == "PM_Admin"])
+
                 teacher_data.append({
                     "교사명": t_name,
-                    "돌봄 포인트": t_care,
-                    "행정 포인트": t_admin,
-                    "휴가 포인트": t_vacation,
-                    "이월 포인트": t_carry,
-                    "teacher_id": t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
+                    "설정 돌봄": t_care,
+                    "설정 행정": t_admin,
+                    "설정 휴가": t_vacation,
+                    "이월": t_carry,
+                    "실제 오전돌봄": actual_am_care,
+                    "실제 오후돌봄": actual_pm_care,
+                    "실제 오전행정": actual_am_admin,
+                    "실제 오후행정": actual_pm_admin,
+                    "실제 돌봄": actual_care,
+                    "실제 행정": actual_admin,
+                    "실제 합계": len(t_schedules),
+                    "teacher_id": tid
                 })
 
             df = pd.DataFrame(teacher_data)
@@ -249,10 +267,17 @@ def _render_teacher_assignment():
                 df,
                 column_config={
                     "교사명": st.column_config.TextColumn("교사명", disabled=True),
-                    "돌봄 포인트": st.column_config.NumberColumn("돌봄 포인트", min_value=0, max_value=200, help="돌봄 필요 인원 기반 자동 계산"),
-                    "행정 포인트": st.column_config.NumberColumn("행정 포인트", min_value=0, max_value=100, help="관리자가 설정 (모든 교사 동일)"),
-                    "휴가 포인트": st.column_config.NumberColumn("휴가 포인트", min_value=0, max_value=200, help="총 근무 가능 - 돌봄 - 행정 (자동 계산)"),
-                    "이월 포인트": st.column_config.NumberColumn("이월 포인트", disabled=True),
+                    "설정 돌봄": st.column_config.NumberColumn("설정 돌봄", min_value=0, max_value=200, help="돌봄 필요 인원 기반 자동 계산"),
+                    "설정 행정": st.column_config.NumberColumn("설정 행정", min_value=0, max_value=100, help="관리자가 설정 (모든 교사 동일)"),
+                    "설정 휴가": st.column_config.NumberColumn("설정 휴가", min_value=0, max_value=200, help="총 근무 가능 - 돌봄 - 행정 (자동 계산)"),
+                    "이월": st.column_config.NumberColumn("이월", disabled=True),
+                    "실제 오전돌봄": st.column_config.NumberColumn("실제 오전돌봄", disabled=True, help="실제 배정된 오전돌봄 횟수"),
+                    "실제 오후돌봄": st.column_config.NumberColumn("실제 오후돌봄", disabled=True, help="실제 배정된 오후돌봄 횟수"),
+                    "실제 오전행정": st.column_config.NumberColumn("실제 오전행정", disabled=True, help="실제 배정된 오전행정 횟수"),
+                    "실제 오후행정": st.column_config.NumberColumn("실제 오후행정", disabled=True, help="실제 배정된 오후행정 횟수"),
+                    "실제 돌봄": st.column_config.NumberColumn("실제 돌봄", disabled=True),
+                    "실제 행정": st.column_config.NumberColumn("실제 행정", disabled=True),
+                    "실제 합계": st.column_config.NumberColumn("실제 합계", disabled=True),
                     "teacher_id": None  # 숨김
                 },
                 use_container_width=True,
@@ -266,9 +291,9 @@ def _render_teacher_assignment():
                 for _, row in edited_df.iterrows():
                     if not update_teacher_points(
                         vacation_id, row["teacher_id"],
-                        care_points=row["돌봄 포인트"],
-                        admin_points=row["행정 포인트"],
-                        vacation_points=row["휴가 포인트"]
+                        care_points=row["설정 돌봄"],
+                        admin_points=row["설정 행정"],
+                        vacation_points=row["설정 휴가"]
                     ):
                         success = False
 
@@ -571,15 +596,21 @@ def _render_excluded_dates_tab(vacation: Vacation):
         if excluded:
             excluded_data = []
             for e in excluded:
+                time_scope_display = {
+                    "ALL": "종일",
+                    "AM": "오전",
+                    "PM": "오후"
+                }.get(e.time_scope, e.time_scope)
                 excluded_data.append({
                     "날짜": e.date.strftime("%m/%d(%a)"),
                     "사유": e.reason,
                     "유형": "공휴일" if e.is_holiday else "학교 휴일",
+                    "적용 시간": time_scope_display,
                     "id": e.id
                 })
 
             df = pd.DataFrame(excluded_data)
-            st.dataframe(df[["날짜", "사유", "유형"]], use_container_width=True, hide_index=True)
+            st.dataframe(df[["날짜", "사유", "유형", "적용 시간"]], use_container_width=True, hide_index=True)
 
             # 삭제
             exclude_to_remove = st.multiselect(
