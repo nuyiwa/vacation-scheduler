@@ -972,9 +972,13 @@ def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value:
         total_care_slots = sum(care_reqs_map.get(slot, 0) for slot in valid_slots)
 
         # 반짝선생님: 유효한 슬롯에서만 1 감소 (제외된 날짜는 이미 valid_slots에 없음)
+        # get_flash_teachers()는 raw dict를 반환하므로 date가 문자열일 수 있음 → date 타입 변환
+        from datetime import date as _date
         for f in flash:
             f_date = f.get("date") if isinstance(f, dict) else f.date
             f_slot = f.get("slot_type") if isinstance(f, dict) else f.slot_type
+            if isinstance(f_date, str):
+                f_date = _date.fromisoformat(f_date)
             if (f_date, f_slot) in valid_slots:
                 total_care_slots -= 1
 
