@@ -496,151 +496,164 @@ def _calculate_stats(schedules: List[Schedule], teachers: List[dict]) -> Dict:
 # ============================================================
 def run_random_assignment(vacation: Vacation) -> OptimizationResult:
     """
-    교사별로 1차 최적화 설정 횟수(care_points, admin_points)를 정확히 채우는 랜덤 배정.
-    - 캐시 없이 DB 직접 조회로 최신 포인트 보장
-    - 교사별 휴가 신청 슬롯 차단
-    - 교사별 행정 신청 우선 고정 배정
-    - 나머지 돌봄/행정 랜덤 배정
+    2차 랜덤 배정:
+    - _collect_input_data 로 모든 입력 데이터 수집 (teachers는 캐시 없이 최신값)
+    - Phase 1: 행정 신청 → 해당 날짜·슬롯 고정
+    - Phase 2: 돌봄 배정 → 슬롯별 필요 인원 충족 (care_points 소진)
+    - Phase 3: 나머지 행정 랜덤 배정 → admin_points 소진
     """
     import random
     result = OptimizationResult()
 
     try:
-        # ── 항상 최신 DB 값 사용 (캐시 우회) ───────────────────────
-        teachers_data = get_vacation_teachers_fresh(vacation.id)
-        if not teachers_data:
+        # _collect_input_data 안에서 get_vacation_teachers_fresh 사용 → 최신 포인트 보장
+        inp = _collect_input_data(vacation)
+
+        teachers = inp.teachers
+        if not teachers:
             result.error_message = "배정된 교사가 없습니다."
             return result
-
-        excluded_raw  = get_excluded_dates(vacation.id)
-        flash_raw     = get_flash_teachers(vacation.id)
-        care_reqs_raw = get_care_requirements(vacation.id)
-
-        # ── 제외일 scope 맵 ────────────────────────────────────────
-        excluded_scope: Dict = {}
-        for e in excluded_raw:
-            e_date  = e.date if hasattr(e, "date") else date.fromisoformat(str(e.get("date")))
-            e_scope = e.time_scope if hasattr(e, "time_scope") else e.get("time_scope", "ALL")
-            excluded_scope[e_date] = e_scope
-
-        for y in range(vacation.start_date.year, vacation.end_date.year + 1):
-            for h in get_korean_holidays(y):
-                if vacation.start_date <= h <= vacation.end_date:
-                    excluded_scope[h] = "ALL"
-
-        # ── 근무 가능 날짜 ─────────────────────────────────────────
-        all_excluded_days = {d for d, s in excluded_scope.items() if s == "ALL"}
-        working_days = get_working_days(vacation.start_date, vacation.end_date, all_excluded_days)
-        if not working_days:
+        if not inp.working_days:
             result.error_message = "근무 가능한 날짜가 없습니다."
             return result
 
-        # ── 유효 슬롯 목록 ─────────────────────────────────────────
-        def _valid(d: date, half: str) -> bool:
-            scope = excluded_scope.get(d)
-            if scope == "ALL":               return False
+        def get_tid(t):
+            return t.get("teacher_id", "") if isinstance(t, dict) else t.teacher_id
+
+        def _valid(d, half):
+            scope = inp.excluded_dates.get(d)
+            if scope == "ALL":                 return False
             if scope == "AM" and half == "AM": return False
             if scope == "PM" and half == "PM": return False
+            if half == "PM" and d in inp.meeting_weeks: return False
             return True
 
-        all_slots  = [(d, h) for d in working_days for h in ("AM", "PM") if _valid(d, h)]
+        all_slots = [(d, h) for d in inp.working_days
+                     for h in ("AM", "PM") if _valid(d, h)]
 
-        # ── 반짝선생님 슬롯 (돌봄 불필요) ─────────────────────────
-        flash_slots: Set = set()
-        for f in flash_raw:
-            f_date = f.get("date") if isinstance(f, dict) else f.date
-            f_slot = f.get("slot_type") if isinstance(f, dict) else f.slot_type
-            if isinstance(f_date, str):
-                f_date = date.fromisoformat(f_date)
-            flash_slots.add((f_date, f_slot))
+        # ── 교사별 사전 데이터 수집 ─────────────────────────────────
+        t_care  = {}   # tid -> 설정 돌봄 횟수
+        t_admin = {}   # tid -> 남은 행정 횟수
+        t_blocked = {} # tid -> 휴가로 차단된 (date, half) set
+        t_used    = {} # tid -> 이미 배정된 (date, half) set
 
-        # 돌봄 배정 가능 슬롯 = 전체 유효 슬롯에서 반짝선생님 슬롯 제외
-        care_slots = [(d, h) for (d, h) in all_slots if (d, h) not in flash_slots]
+        for t in teachers:
+            tid = get_tid(t)
+            t_care[tid]    = int(t.get("care_points",  0) if isinstance(t, dict) else t.care_points)
+            t_admin[tid]   = int(t.get("admin_points", 0) if isinstance(t, dict) else t.admin_points)
+            t_blocked[tid] = set()
+            t_used[tid]    = set()
+
+            # 휴가 신청 → 차단
+            for r in inp.vacation_requests.get(tid, []):
+                r_date = r.date if hasattr(r, "date") else r.get("date")
+                r_type = (r.request_type if hasattr(r, "request_type")
+                          else r.get("request_type", ""))
+                if r_type in ("full_day", VacationRequestType.FULL_DAY):
+                    t_blocked[tid].add((r_date, "AM"))
+                    t_blocked[tid].add((r_date, "PM"))
+                elif r_type in ("am", VacationRequestType.AM):
+                    t_blocked[tid].add((r_date, "AM"))
+                elif r_type in ("pm", VacationRequestType.PM):
+                    t_blocked[tid].add((r_date, "PM"))
 
         schedules: List[Schedule] = []
 
-        # ── 교사별 배정 ────────────────────────────────────────────
-        for teacher in teachers_data:
-            tid        = teacher.get("teacher_id", "")
-            care_need  = int(teacher.get("care_points",  0))
-            admin_need = int(teacher.get("admin_points", 0))
-
-            # 사용 중인 슬롯 추적 (이 교사의 AM/PM 이미 배정된 것)
-            used: Set[Tuple[date, str]] = set()
-
-            # 1) 휴가 신청 → 해당 슬롯 차단
-            blocked: Set[Tuple[date, str]] = set()
-            vac_reqs = get_vacation_requests(tid, vacation.id)
-            for r in vac_reqs:
-                r_date = r.date if hasattr(r, "date") else r.get("date")
-                r_type = r.request_type if hasattr(r, "request_type") else r.get("request_type", "")
-                if r_type in ("full_day", VacationRequestType.FULL_DAY):
-                    blocked.add((r_date, "AM"))
-                    blocked.add((r_date, "PM"))
-                elif r_type in ("am", VacationRequestType.AM):
-                    blocked.add((r_date, "AM"))
-                elif r_type in ("pm", VacationRequestType.PM):
-                    blocked.add((r_date, "PM"))
-
-            # 2) 행정 신청 → 우선 고정 배정
+        # ── Phase 1: 행정 신청 고정 배정 ────────────────────────────
+        for t in teachers:
+            tid = get_tid(t)
             adm_reqs = get_admin_requests(tid, vacation.id)
             for r in adm_reqs:
                 r_date = r.date if hasattr(r, "date") else r.get("date")
-                r_slot = r.slot_type if hasattr(r, "slot_type") else r.get("slot_type", "AM")
+                r_slot = (r.slot_type if hasattr(r, "slot_type")
+                           else r.get("slot_type", "AM"))
                 key = (r_date, r_slot)
-                if key in blocked or key in used:
-                    continue
-                if not _valid(r_date, r_slot):
-                    continue
+                if not _valid(r_date, r_slot): continue
+                if key in t_blocked[tid]: continue
+                if key in t_used[tid]: continue
                 schedules.append(Schedule(
                     vacation_id=vacation.id, teacher_id=tid,
                     date=r_date, slot_type=f"{r_slot}_Admin",
                     is_flash_teacher=False
                 ))
-                used.add(key)
-                admin_need -= 1
+                t_used[tid].add(key)
+                t_admin[tid] = max(0, t_admin[tid] - 1)
 
-            admin_need = max(0, admin_need)
+        # ── Phase 2: 돌봄 배정 (슬롯별 필요 인원 충족, care_points 소진) ──
+        # 각 슬롯의 남은 필요 인원
+        slot_need: Dict = {}
+        for (d, half), req in inp.care_requirements.items():
+            if not _valid(d, half): continue
+            flash_key = (d, half)
+            n = req - (1 if flash_key in inp.flash_teachers else 0)
+            if n > 0:
+                slot_need[(d, half)] = n
 
-            # 3) 나머지 돌봄 랜덤 배정 (care_need 만큼)
-            avail_care = [(d, h) for (d, h) in care_slots
-                          if (d, h) not in blocked and (d, h) not in used]
-            random.shuffle(avail_care)
-            for d, h in avail_care:
-                if care_need <= 0:
-                    break
-                schedules.append(Schedule(
-                    vacation_id=vacation.id, teacher_id=tid,
-                    date=d, slot_type=f"{h}_Childcare",
-                    is_flash_teacher=False
-                ))
-                used.add((d, h))
-                care_need -= 1
+        for d in inp.working_days:
+            for half in ("AM", "PM"):
+                if not _valid(d, half): continue
+                needed = slot_need.get((d, half), 0)
+                if needed <= 0: continue
 
-            # 4) 나머지 행정 랜덤 배정 (admin_need 만큼)
-            avail_admin = [(d, h) for (d, h) in all_slots
-                           if (d, h) not in blocked and (d, h) not in used]
-            random.shuffle(avail_admin)
-            for d, h in avail_admin:
-                if admin_need <= 0:
-                    break
+                flash_tid = inp.flash_teachers.get((d, half))
+                slot_key  = f"{half}_Childcare"
+
+                # 이미 배정된 수 차감
+                already = sum(1 for s in schedules
+                              if s.date == d and s.slot_type == slot_key)
+                needed -= already
+                if needed <= 0: continue
+
+                # 배정 가능 교사: care 남음 + 반짝선생님 아님 + 차단 없음 + 미배정
+                candidates = [
+                    t for t in teachers
+                    if t_care[get_tid(t)] > 0
+                    and get_tid(t) != flash_tid
+                    and (d, half) not in t_blocked[get_tid(t)]
+                    and (d, half) not in t_used[get_tid(t)]
+                ]
+                random.shuffle(candidates)
+
+                for t in candidates[:needed]:
+                    tid = get_tid(t)
+                    schedules.append(Schedule(
+                        vacation_id=vacation.id, teacher_id=tid,
+                        date=d, slot_type=slot_key,
+                        is_flash_teacher=False
+                    ))
+                    t_used[tid].add((d, half))
+                    t_care[tid] -= 1
+
+        # ── Phase 3: 나머지 행정 랜덤 배정 (admin_points 소진) ─────
+        for t in teachers:
+            tid   = get_tid(t)
+            need  = t_admin[tid]
+            if need <= 0: continue
+
+            avail = [(d, h) for (d, h) in all_slots
+                     if (d, h) not in t_blocked[tid]
+                     and (d, h) not in t_used[tid]]
+            random.shuffle(avail)
+
+            for d, h in avail:
+                if need <= 0: break
                 schedules.append(Schedule(
                     vacation_id=vacation.id, teacher_id=tid,
                     date=d, slot_type=f"{h}_Admin",
                     is_flash_teacher=False
                 ))
-                used.add((d, h))
-                admin_need -= 1
+                t_used[tid].add((d, h))
+                need -= 1
 
-        result.schedules  = schedules
-        result.success    = True
-        result.solver_status = "규칙 기반 배정 완료"
-        result.stats      = _calculate_stats(schedules, teachers_data)
+        result.schedules     = schedules
+        result.success       = True
+        result.solver_status = "랜덤 배정 완료"
+        result.stats         = _calculate_stats(schedules, teachers)
         return result
 
     except Exception as e:
         result.error_message = str(e)
-        result.success = False
+        result.success       = False
         return result
 
 
