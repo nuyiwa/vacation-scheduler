@@ -419,11 +419,14 @@ def _collect_input_data(vacation: Vacation) -> OptimizationInput:
         input_data.care_requirements[(cr.date, cr.slot_type)] = cr.required_count
     
     # 반짝선생님
+    # get_flash_teachers()는 raw dict 반환 → date가 문자열일 수 있으므로 변환
     flash_data = get_flash_teachers(vacation.id)
     for f in flash_data:
         f_date = f.get("date") if isinstance(f, dict) else f.date
         f_slot = f.get("slot_type") if isinstance(f, dict) else f.slot_type
         f_teacher = f.get("teacher_id") if isinstance(f, dict) else f.teacher_id
+        if isinstance(f_date, str):
+            f_date = date.fromisoformat(f_date)
         input_data.flash_teachers[(f_date, f_slot)] = f_teacher
     
     # 교사 선호도
@@ -593,114 +596,93 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                 teacher_used_points[tid]["total"] += 1
         
         # ============================================================
-        # 3. 남은 포인트 계산
+        # 3. 남은 배정 횟수 계산 (vacation_points는 작업 대상 아님)
         # ============================================================
-        remaining_points = {}
+        remaining_care = {}   # teacher_id -> 남은 돌봄 횟수
+        remaining_admin = {}  # teacher_id -> 남은 행정 횟수
+
         for t in teachers:
             tid = get_tid(t)
-            care_pts = get_care_points(t)
-            admin_pts = get_admin_points(t)
-            vacation_pts = get_vacation_points(t)
-            
             used = teacher_used_points[tid]
-            remaining_points[tid] = {
-                "care": max(0, care_pts - used["care"]),
-                "admin": max(0, admin_pts - used["admin"]),
-                "vacation": max(0, vacation_pts - used["vacation"]),
-                "total": max(0, (care_pts + admin_pts + vacation_pts) - used["total"])
-            }
-        
+            remaining_care[tid]  = max(0, get_care_points(t)  - used["care"])
+            remaining_admin[tid] = max(0, get_admin_points(t) - used["admin"])
+
         # ============================================================
-        # 4. 빈 슬롯 채우기 (규칙 기반)
+        # 4. 슬롯 채우기
         # ============================================================
+        import random
         schedules = []
-        
-        # 4-1. 고정 배정을 스케줄로 변환
+
+        # 유효 슬롯 여부 판단 헬퍼
+        def _is_valid_slot(d, slot_am_pm):
+            scope = input_data.excluded_dates.get(d)
+            if scope == "ALL":
+                return False
+            if scope == "AM" and slot_am_pm == "AM":
+                return False
+            if scope == "PM" and slot_am_pm == "PM":
+                return False
+            if slot_am_pm == "PM" and d in input_data.meeting_weeks:
+                return False
+            return True
+
+        # 교사가 해당 날짜+시간대에 배정 가능한지 판단 헬퍼
+        def _can_assign(tid, d, slot_am_pm):
+            # 이미 이 AM 또는 PM 슬롯에 배정됨
+            if any(s.date == d and s.teacher_id == tid and s.slot_type.startswith(slot_am_pm)
+                   for s in schedules):
+                return False
+            # 휴가 신청한 슬롯
+            if fixed_assignments.get((d, f"{slot_am_pm}_Vacation")) == tid:
+                return False
+            return True
+
+        # 4-1. 고정 행정 신청을 스케줄로 변환
         for (d, slot_key), tid in fixed_assignments.items():
             if "Vacation" in slot_key:
-                continue  # 휴가는 스케줄에 포함하지 않음
-            slot_type = slot_key  # "AM_Admin" or "PM_Admin"
+                continue
             schedules.append(Schedule(
                 vacation_id=vacation.id,
                 teacher_id=tid,
                 date=d,
-                slot_type=slot_type,
+                slot_type=slot_key,
                 is_flash_teacher=False
             ))
-        
-        # 4-2. 날짜별로 빈 슬롯 파악
-        # 각 날짜의 AM/PM에 대해 필요한 돌봄 인원과 현재 배정된 인원 계산
+
+        # 4-2. 돌봄 슬롯 채우기 (care_requirements 충족)
         for d in days:
             for slot_am_pm in ["AM", "PM"]:
-                # 제외일 체크 (time_scope 고려)
-                excluded_scope = input_data.excluded_dates.get(d)
-                if excluded_scope == "ALL":
+                if not _is_valid_slot(d, slot_am_pm):
                     continue
-                if excluded_scope == "AM" and slot_am_pm == "AM":
-                    continue
-                if excluded_scope == "PM" and slot_am_pm == "PM":
-                    continue
-                # 회의주간 체크
-                if slot_am_pm == "PM" and d in input_data.meeting_weeks:
-                    continue
-                
-                # 돌봄 필요 인원
+
                 required = input_data.care_requirements.get((d, slot_am_pm), 0)
-                
-                # 반짝선생님 체크 (teacher_id가 None이어도 키 존재 자체로 체크)
+
+                # 반짝선생님: 해당 슬롯 필요 인원 1 감소
                 flash_key = (d, slot_am_pm)
                 if flash_key in input_data.flash_teachers:
                     required = max(0, required - 1)
-                
+
                 if required <= 0:
                     continue
-                
-                # 현재 이 날짜/슬롯에 배정된 교사 수
+
                 slot_key = f"{slot_am_pm}_Childcare"
-                assigned_count = len([s for s in schedules 
-                                      if s.date == d and s.slot_type == slot_key])
-                
-                # 부족한 인원만큼 배정
-                needed = required - assigned_count
+                already = len([s for s in schedules if s.date == d and s.slot_type == slot_key])
+                needed = required - already
                 if needed <= 0:
                     continue
-                
-                # 배정 가능한 교사 찾기
-                available_teachers = []
-                for t in teachers:
-                    tid = get_tid(t)
-                    
-                    # 남은 포인트 확인
-                    if remaining_points[tid]["total"] <= 0:
-                        continue
-                    if remaining_points[tid]["care"] <= 0:
-                        continue
-                    
-                    # 이 날짜+시간대(AM/PM)에 이미 배정되었는지 확인 (오전/오후 각 1슬롯 허용)
-                    already_half_assigned = any(
-                        s.date == d and s.teacher_id == tid and s.slot_type.startswith(slot_am_pm)
-                        for s in schedules
-                    )
-                    if already_half_assigned:
-                        continue
 
-                    # 휴가 신청한 날짜인지 확인
-                    if (d, f"{slot_am_pm}_Vacation") in fixed_assignments and \
-                       fixed_assignments[(d, f"{slot_am_pm}_Vacation")] == tid:
-                        continue
+                # 반짝선생님 본인은 해당 슬롯 돌봄 제외
+                flash_tid = input_data.flash_teachers.get(flash_key)
 
-                    # 반짝선생님인 경우 제외 (teacher_id가 교사 목록에 있을 수 있으므로)
-                    flash_tid = input_data.flash_teachers.get(flash_key)
-                    if flash_tid and flash_tid == tid:
-                        continue
-                    
-                    available_teachers.append(t)
-                
-                # 필요한 만큼 배정
-                import random
-                random.shuffle(available_teachers)
-                
-                for t in available_teachers[:needed]:
+                candidates = [
+                    t for t in teachers
+                    if remaining_care[get_tid(t)] > 0
+                    and _can_assign(get_tid(t), d, slot_am_pm)
+                    and get_tid(t) != flash_tid
+                ]
+                random.shuffle(candidates)
+
+                for t in candidates[:needed]:
                     tid = get_tid(t)
                     schedules.append(Schedule(
                         vacation_id=vacation.id,
@@ -709,52 +691,21 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                         slot_type=slot_key,
                         is_flash_teacher=False
                     ))
-                    remaining_points[tid]["total"] -= 1
-                    remaining_points[tid]["care"] -= 1
-        
-        # 4-3. 남은 포인트를 행정 슬롯으로 채우기
+                    remaining_care[tid] -= 1
+
+        # 4-3. 행정 슬롯 채우기 (남은 admin 횟수 소진)
         for d in days:
             for slot_am_pm in ["AM", "PM"]:
-                # 제외일 체크 (time_scope 고려)
-                excluded_scope = input_data.excluded_dates.get(d)
-                if excluded_scope == "ALL":
+                if not _is_valid_slot(d, slot_am_pm):
                     continue
-                if excluded_scope == "AM" and slot_am_pm == "AM":
-                    continue
-                if excluded_scope == "PM" and slot_am_pm == "PM":
-                    continue
-                # 회의주간 체크
-                if slot_am_pm == "PM" and d in input_data.meeting_weeks:
-                    continue
-                
+
                 slot_key = f"{slot_am_pm}_Admin"
-                
-                # 이미 배정된 교사 확인
-                assigned_tids = set(
-                    s.teacher_id for s in schedules 
-                    if s.date == d and s.slot_type == slot_key
-                )
-                
-                # 배정 가능한 교사 찾기
+
                 for t in teachers:
                     tid = get_tid(t)
-                    
-                    if remaining_points[tid]["total"] <= 0:
+                    if remaining_admin[tid] <= 0:
                         continue
-                    if remaining_points[tid]["admin"] <= 0:
-                        continue
-                    
-                    # 이 날짜+시간대(AM/PM)에 이미 배정되었는지 확인 (오전/오후 각 1슬롯 허용)
-                    already_half_assigned = any(
-                        s.date == d and s.teacher_id == tid and s.slot_type.startswith(slot_am_pm)
-                        for s in schedules
-                    )
-                    if already_half_assigned:
-                        continue
-
-                    # 휴가 신청한 날짜인지 확인
-                    if (d, f"{slot_am_pm}_Vacation") in fixed_assignments and \
-                       fixed_assignments[(d, f"{slot_am_pm}_Vacation")] == tid:
+                    if not _can_assign(tid, d, slot_am_pm):
                         continue
 
                     schedules.append(Schedule(
@@ -764,8 +715,7 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                         slot_type=slot_key,
                         is_flash_teacher=False
                     ))
-                    remaining_points[tid]["total"] -= 1
-                    remaining_points[tid]["admin"] -= 1
+                    remaining_admin[tid] -= 1
         
         # ============================================================
         # 5. 결과 저장
