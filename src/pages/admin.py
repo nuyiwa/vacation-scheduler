@@ -936,13 +936,27 @@ def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value:
         # 행정 포인트 일괄 설정
         update_all_teacher_admin_points(vacation_id, admin_point_value)
 
-        # 총 돌봄 필요 슬롯 수 계산
-        total_care_slots = sum(cr.required_count for cr in care_reqs)
+        # 제외일/공휴일 scope 맵 구성 (date → "ALL" | "AM" | "PM")
+        excluded_scope_map = {e.date: e.time_scope for e in excluded}
+        for y in range(vacation.start_date.year, vacation.end_date.year + 1):
+            for h in get_korean_holidays(y):
+                if vacation.start_date <= h <= vacation.end_date:
+                    excluded_scope_map[h] = "ALL"
 
-        # 반짝선생님: 해당 슬롯 돌봄 필요 인원 1 감소
-        total_care_slots -= len(flash)
+        # 유효한 (날짜, 슬롯) 조합 결정: 제외일·공휴일 슬롯은 처음부터 제외
+        care_reqs_map = {(cr.date, cr.slot_type): cr.required_count for cr in care_reqs}
+        valid_slots = set()
+        for cr in care_reqs:
+            scope = excluded_scope_map.get(cr.date)
+            if scope == "ALL":
+                continue          # 하루 전체 배정 불가
+            if scope == "AM" and cr.slot_type == "AM":
+                continue          # 오전 배정 불가
+            if scope == "PM" and cr.slot_type == "PM":
+                continue          # 오후 배정 불가
+            valid_slots.add((cr.date, cr.slot_type))
 
-        # 회의 주간: 오후 돌봄 없음 + 회의 팀원 오전 돌봄 제외
+        # 회의 주간: PM 슬롯 추가 제외
         meeting_teams = get_meeting_teams(vacation_id)
         daily_assignments = get_daily_meeting_assignments(vacation_id)
 
@@ -952,27 +966,22 @@ def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value:
                 d_date = d.date()
                 if d_date.weekday() >= 5:
                     continue
-                # 오후 돌봄 없음
-                for cr in care_reqs:
-                    if cr.date == d_date and cr.slot_type == "PM":
-                        total_care_slots -= cr.required_count
-                # 회의 팀원 오전 돌봄 제외
-                assigned_teams = [a for a in daily_assignments if a.date == d_date]
-                for at in assigned_teams:
-                    team = next((t for t in meeting_teams if t.id == at.team_id), None)
-                    if team and team.member_ids:
-                        total_care_slots -= len(team.member_ids)
+                valid_slots.discard((d_date, "PM"))
+
+        # 유효 슬롯 기준 총 돌봄 필요 슬롯 수
+        total_care_slots = sum(care_reqs_map.get(slot, 0) for slot in valid_slots)
+
+        # 반짝선생님: 유효한 슬롯에서만 1 감소 (제외된 날짜는 이미 valid_slots에 없음)
+        for f in flash:
+            f_date = f.get("date") if isinstance(f, dict) else f.date
+            f_slot = f.get("slot_type") if isinstance(f, dict) else f.slot_type
+            if (f_date, f_slot) in valid_slots:
+                total_care_slots -= 1
 
         total_care_slots = max(0, total_care_slots)
 
-        # 근무 가능 날짜: time_scope=="ALL"인 날짜만 통째로 제외
-        # (AM/PM 제외일은 해당 슬롯만 배정 불가이므로 하루 전체를 제거하지 않음)
-        all_excluded = {e.date for e in excluded if e.time_scope == "ALL"}
-        for y in range(vacation.start_date.year, vacation.end_date.year + 1):
-            for h in get_korean_holidays(y):
-                if vacation.start_date <= h <= vacation.end_date:
-                    all_excluded.add(h)
-
+        # 근무 가능 날짜: ALL 제외일/공휴일만 통째로 제외 (excluded_scope_map 재활용)
+        all_excluded = {d for d, scope in excluded_scope_map.items() if scope == "ALL"}
         working_days = get_working_days(vacation.start_date, vacation.end_date, all_excluded)
         total_available_slots = len(working_days) * 2  # 오전+오후
 
