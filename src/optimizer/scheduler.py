@@ -19,7 +19,8 @@ from src.db.models import (
     CareRequirement, FlashTeacher, ExcludedDate, MeetingWeek
 )
 from src.db.queries import (
-    get_vacation_teachers, get_care_requirements, get_flash_teachers,
+    get_vacation_teachers_fresh,
+    get_care_requirements, get_flash_teachers,
     get_excluded_dates, get_meeting_weeks, get_teacher_preferences,
     get_vacation_requests, get_admin_requests, save_schedules, calculate_and_save_stats
 )
@@ -387,8 +388,8 @@ def _collect_input_data(vacation: Vacation) -> OptimizationInput:
     """최적화에 필요한 모든 입력 데이터를 수집합니다."""
     input_data = OptimizationInput(vacation)
     
-    # 교사 목록
-    teachers_data = get_vacation_teachers(vacation.id)
+    # 교사 목록 — 캐시 없이 최신 DB 값 조회 (1차 최적화 직후 admin_points 반영 보장)
+    teachers_data = get_vacation_teachers_fresh(vacation.id)
     input_data.teachers = teachers_data
     
     # 제외일 (공휴일 + 학교 휴일) - time_scope 정보 포함
@@ -511,10 +512,6 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
     result = OptimizationResult()
 
     try:
-        # 캐시된 이전 포인트가 아닌 최신 DB 값을 읽도록 캐시 초기화
-        import streamlit as st
-        st.cache_data.clear()
-
         input_data = _collect_input_data(vacation)
 
         if not input_data.teachers:

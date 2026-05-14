@@ -210,6 +210,28 @@ def get_vacation_teachers(vacation_id: str) -> List[VacationTeacher]:
         return []
 
 
+def get_vacation_teachers_fresh(vacation_id: str) -> List[dict]:
+    """캐시 없이 교사 목록 최신 조회 — 2차 배정 직전에 반드시 최신 포인트를 읽기 위해 사용"""
+    try:
+        data = query_table("vacation_teachers", eq={"vacation_id": vacation_id})
+        if not data:
+            return []
+        teacher_ids = [item.get("teacher_id") for item in data if item.get("teacher_id")]
+        profiles = query_table("profiles")
+        profile_map = {p["id"]: p for p in profiles if p.get("id") in teacher_ids}
+        result = []
+        for item in data:
+            profile = profile_map.get(item.get("teacher_id"))
+            if profile:
+                item["teacher_name"] = profile.get("name", "")
+                item["teacher_email"] = profile.get("email", "")
+            result.append(item)
+        return result
+    except Exception as e:
+        _handle_error(e, "교사 목록 조회(fresh)")
+        return []
+
+
 def add_teacher_to_vacation(vacation_id: str, teacher_id: str) -> bool:
     """방학에 교사 추가 (포인트 기반)"""
     try:
@@ -660,6 +682,50 @@ def get_schedules(vacation_id: str, teacher_id: Optional[str] = None) -> List[Sc
         return [Schedule(**item) for item in data]
     except Exception as e:
         _handle_error(e, "스케줄 조회")
+        return []
+
+
+def add_schedule_entry(vacation_id: str, date_val, slot_type: str, teacher_id: str) -> bool:
+    """특정 슬롯에 교사 1명 추가"""
+    try:
+        date_str = date_val.isoformat() if hasattr(date_val, "isoformat") else str(date_val)
+        data = {
+            "vacation_id": vacation_id,
+            "teacher_id": teacher_id,
+            "date": date_str,
+            "slot_type": slot_type,
+            "is_flash_teacher": False,
+        }
+        result = insert_record("schedules", data)
+        if result:
+            clear_vacation_cache()
+        return result is not None
+    except Exception as e:
+        _handle_error(e, "스케줄 항목 추가")
+        return False
+
+
+def remove_schedule_entry(schedule_id: str) -> bool:
+    """특정 스케줄 항목 1개 삭제"""
+    try:
+        result = delete_record("schedules", {"id": schedule_id})
+        if result:
+            clear_vacation_cache()
+        return result
+    except Exception as e:
+        _handle_error(e, "스케줄 항목 삭제")
+        return False
+
+
+@st.cache_data(ttl=30)
+def get_all_vacation_requests_for_vacation(vacation_id: str) -> List[VacationRequest]:
+    """특정 방학의 모든 교사 휴가 신청 조회"""
+    try:
+        data = query_table("vacation_requests", eq={"vacation_id": vacation_id})
+        data.sort(key=lambda x: (x.get("teacher_id", ""), x.get("date", "")))
+        return [VacationRequest(**item) for item in data]
+    except Exception as e:
+        _handle_error(e, "전체 휴가 신청 조회")
         return []
 
 

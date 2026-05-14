@@ -32,6 +32,9 @@ from src.db.queries import (
     get_meeting_teams, save_meeting_team, delete_meeting_team,
     get_daily_meeting_assignments, save_daily_meeting_assignment, delete_daily_meeting_assignment,
     get_schedules, save_schedules, calculate_and_save_stats,
+    add_schedule_entry, remove_schedule_entry,
+    get_all_vacation_requests_for_vacation,
+    get_admin_requests, get_vacation_requests,
     clear_vacation_cache,
     get_teachers_ready_status, is_all_teachers_ready,
     delete_teacher_account, reset_all_vacation_assignments,
@@ -841,7 +844,7 @@ def _render_daily_team_assignments(vacation: Vacation):
 # 2차 랜덤 배정 탭
 # ============================================================
 def _render_stage2_random_assignment():
-    """2차 랜덤 배정: 교사 입력 완료 후 최종 날짜·슬롯 배치"""
+    """2차 랜덤 배정: 실행 + 날짜별 현황 + 신청 현황 + 수동 조정"""
 
     vacation_id = st.session_state.get("selected_vacation_id")
     if not vacation_id:
@@ -854,58 +857,57 @@ def _render_stage2_random_assignment():
         return
 
     st.markdown(f"## 🎲 2차 랜덤 배정 - {vacation.title}")
-    st.markdown("모든 교사가 **휴가 신청 / 행정 신청 / 선호도 설정**을 완료한 후 실행합니다.")
 
-    col_left, col_right = st.columns([2, 3])
+    teachers = get_vacation_teachers(vacation_id)
+    teacher_map = {}  # teacher_id -> name
+    for t in teachers:
+        tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
+        tname = t.get("teacher_name", "Unknown") if isinstance(t, dict) else "Unknown"
+        teacher_map[tid] = tname
 
-    with col_left:
-        st.markdown("### 교사 입력 완료 현황")
-
+    # ── 실행 섹션 ──────────────────────────────────────────────
+    with st.expander("🚀 배정 실행", expanded=True):
         ready_status = get_teachers_ready_status(vacation_id)
         all_ready = bool(ready_status) and all(item.get("is_ready", False) for item in ready_status)
 
-        if ready_status:
-            ready_data = [{
-                "교사명": item.get("teacher_name", "Unknown"),
-                "상태": "✅ 완료" if item.get("is_ready", False) else "⏳ 미완료"
-            } for item in ready_status]
-            st.dataframe(pd.DataFrame(ready_data), use_container_width=True, hide_index=True)
+        col_status, col_btn = st.columns([3, 2])
+        with col_status:
+            if ready_status:
+                ready_data = [{
+                    "교사명": item.get("teacher_name", ""),
+                    "상태": "✅ 완료" if item.get("is_ready", False) else "⏳ 미완료"
+                } for item in ready_status]
+                st.dataframe(pd.DataFrame(ready_data), use_container_width=True, hide_index=True)
+                if not all_ready:
+                    st.warning("⏳ 미완료 교사가 있습니다. 완료 후 실행하세요.")
 
-            if all_ready:
-                st.success("✅ 모든 교사 입력 완료!")
-            else:
-                st.warning("⏳ 미완료 교사가 있습니다.")
-        else:
-            st.info("📭 배정된 교사가 없습니다.")
+        with col_btn:
+            if st.button("🎲 2차 랜덤 배정 실행", type="primary",
+                         use_container_width=True, disabled=not all_ready):
+                with st.spinner("🔄 배정 실행 중..."):
+                    try:
+                        result = run_random_assignment(vacation)
+                        if result.success:
+                            st.session_state["optimization_result"] = result
+                            st.success("✅ 배정 완료! 아래에서 확인 후 저장하세요.")
+                        else:
+                            st.error(f"❌ 배정 실패: {result.error_message}")
+                    except Exception as e:
+                        st.error(f"❌ 오류: {str(e)}")
+                        import traceback
+                        st.code(traceback.format_exc())
 
-        if st.button("🎲 2차 랜덤 배정 실행", type="primary", use_container_width=True,
-                     disabled=not all_ready):
-            with st.spinner("🔄 랜덤 배정 실행 중..."):
-                try:
-                    result = run_random_assignment(vacation)
-                    if result.success:
-                        st.session_state["optimization_result"] = result
-                        st.success("✅ 배정 완료! 오른쪽에서 결과를 확인하고 저장하세요.")
-                    else:
-                        st.error(f"❌ 배정 실패: {result.error_message}")
-                except Exception as e:
-                    st.error(f"❌ 오류 발생: {str(e)}")
-                    import traceback
-                    st.code(traceback.format_exc(), language="python")
-
-    with col_right:
         if "optimization_result" in st.session_state:
             result = st.session_state["optimization_result"]
-            st.markdown("### 📊 배정 결과")
             render_optimization_preview(result)
-
             col_s1, col_s2 = st.columns(2)
             with col_s1:
                 if st.button("💾 결과 저장", type="primary", use_container_width=True):
                     if save_schedules(result.schedules):
                         calculate_and_save_stats(vacation_id)
                         update_vacation(vacation_id, {"status": "confirmed"})
-                        st.success("✅ 스케줄 저장 완료!")
+                        clear_vacation_cache()
+                        st.success("✅ 저장 완료!")
                         st.session_state.pop("optimization_result", None)
                         st.rerun()
                     else:
@@ -914,8 +916,165 @@ def _render_stage2_random_assignment():
                 if st.button("🔄 결과 초기화", use_container_width=True):
                     st.session_state.pop("optimization_result", None)
                     st.rerun()
-        else:
-            st.info("왼쪽에서 2차 랜덤 배정을 실행하면 결과가 여기에 표시됩니다.")
+
+    # 저장된 스케줄이 있으면 아래 탭 표시
+    schedules = get_schedules(vacation_id)
+    if not schedules:
+        st.info("아직 저장된 배정이 없습니다. 위에서 배정 실행 후 저장해주세요.")
+        return
+
+    tab_date, tab_req, tab_edit = st.tabs(["📅 날짜별 배정 현황", "📋 교사별 신청 현황", "✏️ 수동 조정"])
+
+    with tab_date:
+        _render_schedule_by_date(schedules, teacher_map, vacation_id)
+
+    with tab_req:
+        _render_teacher_requests_summary(teachers, teacher_map, vacation_id)
+
+    with tab_edit:
+        _render_manual_adjustment(schedules, teacher_map, teachers, vacation_id, vacation)
+
+
+def _render_schedule_by_date(schedules, teacher_map, vacation_id):
+    """날짜별 배정 현황 — 몇 명이 배정됐는지 + 누가 배정됐는지"""
+    SLOT_LABELS = {
+        "AM_Childcare": "오전돌봄",
+        "PM_Childcare": "오후돌봄",
+        "AM_Admin":     "오전행정",
+        "PM_Admin":     "오후행정",
+    }
+
+    # 날짜 × 슬롯 → [(id, name)] 집계
+    date_slot: dict = {}
+    for s in schedules:
+        d = s.date
+        if d not in date_slot:
+            date_slot[d] = {k: [] for k in SLOT_LABELS}
+        if s.slot_type in date_slot[d]:
+            name = teacher_map.get(s.teacher_id, s.teacher_id[:6])
+            date_slot[d][s.slot_type].append(name)
+
+    rows = []
+    for d in sorted(date_slot):
+        row = {"날짜": d.strftime("%m/%d(%a)")}
+        for slot_key, label in SLOT_LABELS.items():
+            names = date_slot[d].get(slot_key, [])
+            row[label] = f"{len(names)}명: {', '.join(names)}" if names else "-"
+        rows.append(row)
+
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+
+def _render_teacher_requests_summary(teachers, teacher_map, vacation_id):
+    """교사별 휴가·행정 신청 현황"""
+    vacation_reqs = get_all_vacation_requests_for_vacation(vacation_id)
+    req_type_label = {"full_day": "종일", "am": "오전", "pm": "오후"}
+
+    # vacation_requests per teacher
+    vac_map: dict = {}
+    for r in vacation_reqs:
+        tid = r.teacher_id
+        vac_map.setdefault(tid, []).append(
+            f"{r.date.strftime('%m/%d')}({req_type_label.get(r.request_type, r.request_type)})"
+        )
+
+    # admin_requests per teacher (개별 조회)
+    admin_map: dict = {}
+    for t in teachers:
+        tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
+        reqs = get_admin_requests(tid, vacation_id)
+        if reqs:
+            admin_map[tid] = [f"{r.date.strftime('%m/%d')}({'오전' if r.slot_type=='AM' else '오후'})" for r in reqs]
+
+    rows = []
+    for t in teachers:
+        tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
+        rows.append({
+            "교사명": teacher_map.get(tid, "Unknown"),
+            "휴가 신청": ", ".join(vac_map.get(tid, [])) or "-",
+            "행정 신청": ", ".join(admin_map.get(tid, [])) or "-",
+        })
+
+    if rows:
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.info("신청 내역이 없습니다.")
+
+
+def _render_manual_adjustment(schedules, teacher_map, teachers, vacation_id, vacation):
+    """수동으로 특정 날짜·슬롯의 배정 교사 추가·제거"""
+    SLOT_OPTIONS = {
+        "AM_Childcare": "오전돌봄",
+        "PM_Childcare": "오후돌봄",
+        "AM_Admin":     "오전행정",
+        "PM_Admin":     "오후행정",
+    }
+
+    st.markdown("배정된 날짜·슬롯을 선택해 교사를 추가하거나 제거합니다.")
+
+    dates = sorted({s.date for s in schedules})
+    if not dates:
+        st.info("저장된 스케줄이 없습니다.")
+        return
+
+    col_d, col_s = st.columns(2)
+    with col_d:
+        sel_date = st.selectbox(
+            "날짜 선택",
+            options=dates,
+            format_func=lambda d: d.strftime("%m/%d(%a)"),
+            key="manual_date"
+        )
+    with col_s:
+        sel_slot_key = st.selectbox(
+            "슬롯 선택",
+            options=list(SLOT_OPTIONS.keys()),
+            format_func=lambda k: SLOT_OPTIONS[k],
+            key="manual_slot"
+        )
+
+    # 현재 배정된 교사
+    current = [s for s in schedules if s.date == sel_date and s.slot_type == sel_slot_key]
+    current_ids = {s.teacher_id for s in current}
+
+    st.markdown(f"**현재 배정된 교사 ({len(current)}명)**")
+    if current:
+        for s in current:
+            name = teacher_map.get(s.teacher_id, s.teacher_id[:6])
+            col_n, col_btn = st.columns([4, 1])
+            with col_n:
+                st.write(name)
+            with col_btn:
+                if st.button("❌ 제거", key=f"rm_{s.id}"):
+                    if remove_schedule_entry(s.id):
+                        st.success(f"✅ {name} 제거됨")
+                        st.rerun()
+    else:
+        st.write("_(배정 없음)_")
+
+    st.markdown("**교사 추가**")
+    addable = [t for t in teachers
+               if (t.get("teacher_id") if isinstance(t, dict) else t.teacher_id) not in current_ids]
+    if addable:
+        add_opts = {
+            (t.get("teacher_id") if isinstance(t, dict) else t.teacher_id):
+            teacher_map.get(t.get("teacher_id") if isinstance(t, dict) else t.teacher_id, "Unknown")
+            for t in addable
+        }
+        sel_add = st.selectbox(
+            "추가할 교사",
+            options=list(add_opts.keys()),
+            format_func=lambda k: add_opts[k],
+            key="manual_add_teacher"
+        )
+        if st.button("➕ 추가", key="manual_add_btn"):
+            if add_schedule_entry(vacation_id, sel_date, sel_slot_key, sel_add):
+                st.success(f"✅ {add_opts[sel_add]} 추가됨")
+                clear_vacation_cache()
+                st.rerun()
+    else:
+        st.info("추가 가능한 교사가 없습니다.")
 
 
 def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value: int):
