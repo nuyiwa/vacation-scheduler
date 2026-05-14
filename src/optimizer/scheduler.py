@@ -509,10 +509,14 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
         OptimizationResult: 배정 결과
     """
     result = OptimizationResult()
-    
+
     try:
+        # 캐시된 이전 포인트가 아닌 최신 DB 값을 읽도록 캐시 초기화
+        import streamlit as st
+        st.cache_data.clear()
+
         input_data = _collect_input_data(vacation)
-        
+
         if not input_data.teachers:
             result.error_message = "배정된 교사가 없습니다."
             return result

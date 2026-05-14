@@ -32,6 +32,7 @@ from src.db.queries import (
     get_meeting_teams, save_meeting_team, delete_meeting_team,
     get_daily_meeting_assignments, save_daily_meeting_assignment, delete_daily_meeting_assignment,
     get_schedules, save_schedules, calculate_and_save_stats,
+    clear_vacation_cache,
     get_teachers_ready_status, is_all_teachers_ready,
     delete_teacher_account, reset_all_vacation_assignments,
     reset_vacation_assignments, delete_vacation
@@ -1023,6 +1024,7 @@ def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value:
 
         # 방학 상태를 "input"으로 변경 → 교사들이 신청 입력 가능
         update_vacation(vacation_id, {"status": "input"})
+        clear_vacation_cache()  # DB에 저장된 최신 포인트를 2차 배정에서 바로 읽도록 캐시 초기화
 
         st.success("✅ 총량 계산 완료! 방학 상태가 '교사 입력 중'으로 변경되었습니다.")
         st.info(
