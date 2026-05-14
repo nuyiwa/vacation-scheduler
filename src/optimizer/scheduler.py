@@ -676,19 +676,19 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                     if remaining_points[tid]["care"] <= 0:
                         continue
                     
-                    # 이미 이 날짜에 배정되었는지 확인
-                    already_assigned = any(
-                        s.date == d and s.teacher_id == tid 
+                    # 이 날짜+시간대(AM/PM)에 이미 배정되었는지 확인 (오전/오후 각 1슬롯 허용)
+                    already_half_assigned = any(
+                        s.date == d and s.teacher_id == tid and s.slot_type.startswith(slot_am_pm)
                         for s in schedules
                     )
-                    if already_assigned:
+                    if already_half_assigned:
                         continue
-                    
+
                     # 휴가 신청한 날짜인지 확인
                     if (d, f"{slot_am_pm}_Vacation") in fixed_assignments and \
                        fixed_assignments[(d, f"{slot_am_pm}_Vacation")] == tid:
                         continue
-                    
+
                     # 반짝선생님인 경우 제외 (teacher_id가 교사 목록에 있을 수 있으므로)
                     flash_tid = input_data.flash_teachers.get(flash_key)
                     if flash_tid and flash_tid == tid:
@@ -744,19 +744,19 @@ def run_random_assignment(vacation: Vacation) -> OptimizationResult:
                     if remaining_points[tid]["admin"] <= 0:
                         continue
                     
-                    # 이미 이 날짜에 배정되었는지 확인
-                    already_assigned = any(
-                        s.date == d and s.teacher_id == tid 
+                    # 이 날짜+시간대(AM/PM)에 이미 배정되었는지 확인 (오전/오후 각 1슬롯 허용)
+                    already_half_assigned = any(
+                        s.date == d and s.teacher_id == tid and s.slot_type.startswith(slot_am_pm)
                         for s in schedules
                     )
-                    if already_assigned:
+                    if already_half_assigned:
                         continue
-                    
+
                     # 휴가 신청한 날짜인지 확인
                     if (d, f"{slot_am_pm}_Vacation") in fixed_assignments and \
                        fixed_assignments[(d, f"{slot_am_pm}_Vacation")] == tid:
                         continue
-                    
+
                     schedules.append(Schedule(
                         vacation_id=vacation.id,
                         teacher_id=tid,
