@@ -40,7 +40,7 @@ from src.db.models import MeetingTeam
 from src.utils.korean_holidays import (
     get_korean_holidays, get_working_days
 )
-from src.optimizer.scheduler import run_optimization, run_random_assignment, render_optimization_preview
+from src.optimizer.scheduler import run_random_assignment, render_optimization_preview
 
 
 # ============================================================
@@ -877,275 +877,128 @@ def _render_daily_team_assignments(vacation: Vacation):
 
 
 # ============================================================
-# 최적화 실행 탭
+# 최적화 실행 탭 (2단계 워크플로)
 # ============================================================
 def _render_optimization():
-    """PuLP 최적화 실행 및 결과 저장"""
-    
+    """2단계 워크플로: 1단계 총량 결정 → 교사 입력 → 2단계 랜덤 배정"""
+
     vacation_id = st.session_state.get("selected_vacation_id")
     if not vacation_id:
         st.warning("⚠️ 먼저 방학을 선택해주세요.")
         return
-    
+
     vacation = get_vacation(vacation_id)
     if not vacation:
         st.error("❌ 방학 정보를 찾을 수 없습니다.")
         return
-    
-    st.markdown(f"## ⚡ 최적화 실행 - {vacation.title}")
-    
+
+    st.markdown(f"## ⚡ 배정 워크플로 - {vacation.title}")
+
+    # ============================================================
+    # 1단계: 교사별 총량 자동 계산
+    # ============================================================
+    st.markdown("### 1️⃣ 1단계: 교사별 총량 자동 계산")
     st.markdown("""
-    ### 최적화 전 확인사항
-    1. ✅ 교사 배정 및 목표 횟수 설정 완료
-    2. ✅ 돌봄 필요 인원 설정 완료
-    3. ✅ 반짝선생님 등록 완료
-    4. ✅ 제외일/회의 주간 설정 완료
-    5. ✅ 교사 선호도 입력 완료
+    아래 설정을 모두 완료한 후 버튼을 누르면 **교사별 설정돌봄 / 설정행정 / 설정휴가 총량**을
+    자동으로 계산하여 각 교사에게 배포합니다. 배포 후 방학 상태가 **'교사 입력 중'** 으로 바뀝니다.
+    - ✅ 교사 배정 완료 &nbsp; ✅ 날짜별 돌봄 필요 인원 설정 &nbsp; ✅ 반짝선생님 등록 &nbsp; ✅ 제외일 설정
     """)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("### 현재 설정 요약")
-        
+
+    col_summary, col_action = st.columns([3, 2])
+
+    with col_summary:
+        st.markdown("**현재 설정 요약**")
         teachers = get_vacation_teachers(vacation_id)
         care_reqs = get_care_requirements(vacation_id)
         flash = get_flash_teachers(vacation_id)
         excluded = get_excluded_dates(vacation_id)
         meetings = get_meeting_weeks(vacation_id)
-        
+
         st.markdown(f"""
-        - 👨‍🏫 교사 수: {len(teachers)}명
+        - 👨‍🏫 교사: {len(teachers)}명
         - 👶 돌봄 설정: {len(care_reqs)}개
-        - ⭐ 반짝선생님: {len(flash)}명
+        - ⭐ 반짝선생님: {len(flash)}개 슬롯
         - 🚫 제외일: {len(excluded)}일
         - 📅 회의 주간: {len(meetings)}주
         """)
-    
-    with col2:
-        st.markdown("### 👨‍🏫 교사 설정 완료 현황")
-        
-        # 교사 완료 현황 표시
-        ready_status = get_teachers_ready_status(vacation_id)
-        if ready_status:
-            ready_data = []
-            all_ready = True
-            for item in ready_status:
-                is_ready = item.get("is_ready", False)
-                if not is_ready:
-                    all_ready = False
-                ready_data.append({
-                    "교사명": item.get("teacher_name", "Unknown"),
-                    "상태": "✅ 완료" if is_ready else "⏳ 미완료"
-                })
-            
-            df = pd.DataFrame(ready_data)
-            st.dataframe(df, use_container_width=True, hide_index=True)
-            
-            if all_ready:
-                st.success("✅ 모든 교사가 설정을 완료했습니다!")
-            else:
-                st.warning("⏳ 아직 설정을 완료하지 않은 교사가 있습니다.")
-        else:
-            st.info("📭 교사 정보를 불러올 수 없습니다.")
-        
-        st.markdown("---")
-        st.markdown("### 🚀 최적화 실행")
-        
-        # 행정 포인트 입력
-        st.markdown("**행정 포인트 설정**")
+
+        # 현재 배포된 총량 (이미 계산된 경우 표시)
+        if teachers and any(
+            (t.get("care_points", 0) if isinstance(t, dict) else t.care_points) > 0
+            for t in teachers
+        ):
+            st.markdown("**현재 배포된 총량:**")
+            point_data = []
+            for t in teachers:
+                tname = t.get("teacher_name", "Unknown") if isinstance(t, dict) else "Unknown"
+                cp = t.get("care_points", 0) if isinstance(t, dict) else t.care_points
+                ap = t.get("admin_points", 0) if isinstance(t, dict) else t.admin_points
+                vp = t.get("vacation_points", 0) if isinstance(t, dict) else t.vacation_points
+                point_data.append({"교사": tname, "설정돌봄": cp, "설정행정": ap, "설정휴가": vp, "합계": cp + ap + vp})
+            st.dataframe(pd.DataFrame(point_data), use_container_width=True, hide_index=True)
+
+    with col_action:
         admin_point_value = st.number_input(
-            "모든 교사에게 동일하게 부여할 행정 포인트",
+            "행정 포인트 (모든 교사 동일)",
             min_value=0, max_value=100, value=5,
-            help="모든 교사가 동일한 행정 포인트를 갖습니다. (예: 5)",
+            help="방학 기간 동안 각 교사에게 동일하게 부여할 행정 횟수",
             key="admin_point_input"
         )
-        
-        col_opt1, col_opt2 = st.columns(2)
-        
-        with col_opt1:
-            if st.button("🎲 랜덤 배정 실행", use_container_width=True):
-                with st.spinner("🔄 랜덤 배정을 실행 중입니다..."):
-                    try:
-                        result = run_random_assignment(vacation)
-                        if result.success:
-                            st.session_state["optimization_result"] = result
-                            st.session_state["optimization_type"] = "random"
-                            st.success("✅ 랜덤 배정이 완료되었습니다! 아래에서 결과를 확인하고 저장하세요.")
-                        else:
-                            st.error(f"❌ 랜덤 배정 실패: {result.error_message}")
-                    except Exception as e:
-                        st.error(f"❌ 랜덤 배정 중 오류 발생: {str(e)}")
-                        import traceback
-                        st.code(traceback.format_exc(), language="python")
-        
-        with col_opt2:
-            if st.button("⚡ PuLP 최적화 실행", type="primary", use_container_width=True):
-                with st.spinner("🔄 최적화를 실행 중입니다..."):
-                    try:
-                        # 1. 먼저 모든 교사의 행정 포인트를 설정
-                        update_all_teacher_admin_points(vacation_id, admin_point_value)
-                        
-                        # 2. 돌봄 포인트 자동 계산
-                        teachers = get_vacation_teachers(vacation_id)
-                        care_reqs = get_care_requirements(vacation_id)
-                        flash = get_flash_teachers(vacation_id)
-                        excluded = get_excluded_dates(vacation_id)
-                        meetings = get_meeting_weeks(vacation_id)
-                        
-                        if not teachers:
-                            st.error("❌ 배정된 교사가 없습니다. 먼저 교사를 배정해주세요.")
-                            return
-                        
-                        if not care_reqs:
-                            st.error("❌ 돌봄 필요 인원이 설정되지 않았습니다. 먼저 설정해주세요.")
-                            return
-                        
-                        # 총 돌봄 필요 포인트 계산
-                        total_care_points = 0
-                        for cr in care_reqs:
-                            total_care_points += cr.required_count
-                        
-                        # 반짝선생님이 있는 슬롯은 돌봄 필요 인원 1 감소
-                        for f in flash:
-                            total_care_points -= 1
-                        
-                        # 회의 주간: 오후 돌봄 없음, 회의 팀원 오전 돌봄 제외
-                        meeting_teams = get_meeting_teams(vacation_id)
-                        daily_assignments = get_daily_meeting_assignments(vacation_id)
-                        
-                        for m in meetings:
-                            week_dates = pd.date_range(m.week_start, m.week_end, freq='D')
-                            for d in week_dates:
-                                d_date = d.date()
-                                if d_date.weekday() >= 5:
-                                    continue
-                                d_str = d_date.isoformat()
-                                
-                                # 오후 돌봄 없음
-                                for cr in care_reqs:
-                                    if cr.date == d_date and cr.slot_type == "PM":
-                                        total_care_points -= cr.required_count
-                                
-                                # 회의 팀원 오전 돌봄 제외
-                                assigned_teams = [a for a in daily_assignments if a.date == d_date]
-                                for at in assigned_teams:
-                                    team = next((t for t in meeting_teams if t.id == at.team_id), None)
-                                    if team and team.member_ids:
-                                        total_care_points -= len(team.member_ids)
-                        
-                        # 교사당 목표 돌봄 포인트 계산
-                        num_teachers = len(teachers)
-                        
-                        # 총 근무 가능 포인트 계산 (1인당)
-                        # 제외일 + 공휴일을 합쳐서 전달
-                        all_excluded = set()
-                        for e in excluded:
-                            all_excluded.add(e.date)
-                        for y in range(vacation.start_date.year, vacation.end_date.year + 1):
-                            for h in get_korean_holidays(y):
-                                if vacation.start_date <= h <= vacation.end_date:
-                                    all_excluded.add(h)
-                        
-                        working_days = get_working_days(
-                            vacation.start_date, vacation.end_date,
-                            all_excluded
-                        )
-                        total_available_points = len(working_days) * 2  # 오전+오후
-                        
-                        # carry_over_points가 가장 적은 순으로 정렬 (누적치가 적은 교사가 우선)
-                        sorted_teachers = sorted(
-                            teachers,
-                            key=lambda t: t.get("carry_over_points", 0) if isinstance(t, dict) else t.carry_over_points
-                        )
-                        
-                        # 각 교사의 포인트 저장
-                        # total_care_points를 교사 수로 나누되, 나머지는 carry_over_points가 적은 교사에게 우선 배정
-                        care_points_base = total_care_points // num_teachers  # 기본 몫
-                        care_points_remainder = total_care_points % num_teachers  # 나머지
-                        
-                        assigned_care_total = 0  # 실제 배정된 돌봄 포인트 합계
-                        for i, t in enumerate(sorted_teachers):
-                            tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
-                            
-                            # 나머지 1포인트를 carry_over_points가 적은 교사에게 배정
-                            extra = 1 if i < care_points_remainder else 0
-                            cp = care_points_base + extra
-                            
-                            # carry_over_points 반영 (양수면 덜 배정, 음수면 더 배정)
-                            carry = t.get("carry_over_points", 0) if isinstance(t, dict) else t.carry_over_points
-                            cp = max(1, cp - carry)  # 최소 1포인트는 보장
-                            
-                            vacation_points = max(0, total_available_points - cp - admin_point_value)
-                            
-                            update_teacher_points(
-                                vacation_id, tid,
-                                care_points=cp,
-                                admin_points=admin_point_value,
-                                vacation_points=vacation_points
-                            )
-                            assigned_care_total += cp
-                        
-                        # 만약 나머지 처리 + carry 반영으로 인해 total_care_points보다 부족하면,
-                        # carry_over_points가 가장 적은 교사에게 추가 배정
-                        deficit = total_care_points - assigned_care_total
-                        if deficit > 0:
-                            for i in range(deficit):
-                                idx = i % num_teachers
-                                t = sorted_teachers[idx]
-                                tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
-                                # 현재 DB에 저장된 값을 다시 읽어서 +1
-                                current = get_vacation_teacher_points(vacation_id, tid)
-                                if current:
-                                    update_teacher_points(
-                                        vacation_id, tid,
-                                        care_points=current["care_points"] + 1,
-                                        admin_points=admin_point_value,
-                                        vacation_points=max(0, total_available_points - (current["care_points"] + 1) - admin_point_value)
-                                    )
-                                    assigned_care_total += 1
-                        
-                        st.success(f"✅ 포인트 자동 계산 완료! (총 돌봄 {total_care_points}포인트, 1인당 {care_points_base}~{care_points_base + 1}포인트)")
-                        st.info(f"""
-                        - **돌봄 포인트**: {care_points_base}~{care_points_base + 1} (총 {total_care_points}포인트 ÷ {num_teachers}명, 나머지 {care_points_remainder}포인트는 carry_over_points가 적은 교사에게 우선 배정)
-                        - **행정 포인트**: {admin_point_value} (관리자 설정)
-                        - **총 근무 가능**: {total_available_points}포인트 ({len(working_days)}일 × 2)
-                        - **실제 배정 합계**: {assigned_care_total}포인트 (목표: {total_care_points})
-                        """)
-                        
-                        # 3. 최적화 실행
-                        result = run_optimization(vacation)
-                        
-                        if result.success:
-                            st.session_state["optimization_result"] = result
-                            st.session_state["optimization_type"] = "pulp"
-                            st.success("✅ PuLP 최적화가 완료되었습니다! 아래에서 결과를 확인하고 저장하세요.")
-                        else:
-                            st.error(f"❌ 최적화 실패: {result.error_message}")
-                            st.info("💡 문제 해결 팁:")
-                            st.markdown("""
-                            1. 각 교사의 **포인트**가 너무 높거나 낮은지 확인하세요.
-                            2. **돌봄 필요 인원**이 전체 기간에 걸쳐 적절히 설정되었는지 확인하세요.
-                            3. **휴가 신청**이 너무 많아서 배정이 불가능한 날짜가 없는지 확인하세요.
-                            4. **회의 주간** 설정이 올바른지 확인하세요.
-                            5. 교사 수에 비해 **총 포인트 합계**가 너무 큰지 확인하세요.
-                            """)
-                    except Exception as e:
-                        st.error(f"❌ 최적화 중 오류 발생: {str(e)}")
-                        import traceback
-                        st.code(traceback.format_exc(), language="python")
-    
-    # 최적화 결과 표시 (session_state에 저장된 결과)
+
+        if st.button("⚡ 총량 자동 계산 및 배포", type="primary", use_container_width=True):
+            with st.spinner("🔄 총량을 계산 중입니다..."):
+                _run_stage1_total_calculation(vacation, vacation_id, admin_point_value)
+
+    st.markdown("---")
+
+    # ============================================================
+    # 2단계: 랜덤 배정 (교사 입력 완료 후)
+    # ============================================================
+    st.markdown("### 2️⃣ 2단계: 랜덤 배정 (교사 입력 완료 후)")
+    st.markdown("모든 교사가 **휴가 신청 / 행정 신청 / 선호도 설정**을 완료한 후 실행합니다.")
+
+    ready_status = get_teachers_ready_status(vacation_id)
+    all_ready = bool(ready_status) and all(item.get("is_ready", False) for item in ready_status)
+
+    if ready_status:
+        ready_data = [{
+            "교사명": item.get("teacher_name", "Unknown"),
+            "상태": "✅ 완료" if item.get("is_ready", False) else "⏳ 미완료"
+        } for item in ready_status]
+        st.dataframe(pd.DataFrame(ready_data), use_container_width=True, hide_index=True)
+
+        if all_ready:
+            st.success("✅ 모든 교사가 입력을 완료했습니다!")
+        else:
+            st.warning("⏳ 아직 입력을 완료하지 않은 교사가 있습니다. 완료 후 배정을 실행하세요.")
+    else:
+        st.info("📭 배정된 교사 정보가 없습니다.")
+
+    if st.button("🎲 랜덤 배정 실행", use_container_width=True, disabled=not all_ready):
+        with st.spinner("🔄 랜덤 배정을 실행 중입니다..."):
+            try:
+                result = run_random_assignment(vacation)
+                if result.success:
+                    st.session_state["optimization_result"] = result
+                    st.session_state["optimization_type"] = "random"
+                    st.success("✅ 랜덤 배정이 완료되었습니다! 아래에서 결과를 확인하고 저장하세요.")
+                else:
+                    st.error(f"❌ 랜덤 배정 실패: {result.error_message}")
+            except Exception as e:
+                st.error(f"❌ 랜덤 배정 중 오류 발생: {str(e)}")
+                import traceback
+                st.code(traceback.format_exc(), language="python")
+
+    # ============================================================
+    # 배정 결과 표시 및 저장
+    # ============================================================
     if "optimization_result" in st.session_state:
         st.markdown("---")
         result = st.session_state["optimization_result"]
-        opt_type = st.session_state.get("optimization_type", "unknown")
-        opt_label = "🎲 랜덤 배정" if opt_type == "random" else "⚡ PuLP 최적화"
-        st.markdown(f"### 📊 {opt_label} 결과")
-        
+        st.markdown("### 📊 배정 결과")
+
         render_optimization_preview(result)
-        
-        # 저장 버튼 (항상 표시)
+
         col_save1, col_save2 = st.columns([1, 1])
         with col_save1:
             if st.button("💾 결과 저장", type="primary", use_container_width=True):
@@ -1163,6 +1016,116 @@ def _render_optimization():
                 st.session_state.pop("optimization_result", None)
                 st.session_state.pop("optimization_type", None)
                 st.rerun()
+
+
+def _run_stage1_total_calculation(vacation, vacation_id: str, admin_point_value: int):
+    """1단계: 교사별 총량(설정돌봄/설정행정/설정휴가) 계산 후 DB 저장 및 상태를 'input'으로 변경"""
+    try:
+        teachers = get_vacation_teachers(vacation_id)
+        care_reqs = get_care_requirements(vacation_id)
+        flash = get_flash_teachers(vacation_id)
+        excluded = get_excluded_dates(vacation_id)
+        meetings = get_meeting_weeks(vacation_id)
+
+        if not teachers:
+            st.error("❌ 배정된 교사가 없습니다. 먼저 교사를 배정해주세요.")
+            return
+        if not care_reqs:
+            st.error("❌ 돌봄 필요 인원이 설정되지 않았습니다. 먼저 설정해주세요.")
+            return
+
+        # 행정 포인트 일괄 설정
+        update_all_teacher_admin_points(vacation_id, admin_point_value)
+
+        # 총 돌봄 필요 슬롯 수 계산
+        total_care_slots = sum(cr.required_count for cr in care_reqs)
+
+        # 반짝선생님: 해당 슬롯 돌봄 필요 인원 1 감소
+        total_care_slots -= len(flash)
+
+        # 회의 주간: 오후 돌봄 없음 + 회의 팀원 오전 돌봄 제외
+        meeting_teams = get_meeting_teams(vacation_id)
+        daily_assignments = get_daily_meeting_assignments(vacation_id)
+
+        for m in meetings:
+            week_dates = pd.date_range(m.week_start, m.week_end, freq='D')
+            for d in week_dates:
+                d_date = d.date()
+                if d_date.weekday() >= 5:
+                    continue
+                # 오후 돌봄 없음
+                for cr in care_reqs:
+                    if cr.date == d_date and cr.slot_type == "PM":
+                        total_care_slots -= cr.required_count
+                # 회의 팀원 오전 돌봄 제외
+                assigned_teams = [a for a in daily_assignments if a.date == d_date]
+                for at in assigned_teams:
+                    team = next((t for t in meeting_teams if t.id == at.team_id), None)
+                    if team and team.member_ids:
+                        total_care_slots -= len(team.member_ids)
+
+        total_care_slots = max(0, total_care_slots)
+
+        # 근무 가능 날짜: time_scope=="ALL"인 날짜만 통째로 제외
+        # (AM/PM 제외일은 해당 슬롯만 배정 불가이므로 하루 전체를 제거하지 않음)
+        all_excluded = {e.date for e in excluded if e.time_scope == "ALL"}
+        for y in range(vacation.start_date.year, vacation.end_date.year + 1):
+            for h in get_korean_holidays(y):
+                if vacation.start_date <= h <= vacation.end_date:
+                    all_excluded.add(h)
+
+        working_days = get_working_days(vacation.start_date, vacation.end_date, all_excluded)
+        total_available_slots = len(working_days) * 2  # 오전+오후
+
+        # carry_over_points가 적은 교사에게 우선 배정 (공평한 누적 관리)
+        num_teachers = len(teachers)
+        sorted_teachers = sorted(
+            teachers,
+            key=lambda t: t.get("carry_over_points", 0) if isinstance(t, dict) else t.carry_over_points
+        )
+
+        care_base = total_care_slots // num_teachers
+        care_remainder = total_care_slots % num_teachers
+
+        results = []
+        for i, t in enumerate(sorted_teachers):
+            tid = t.get("teacher_id") if isinstance(t, dict) else t.teacher_id
+            tname = t.get("teacher_name", "Unknown") if isinstance(t, dict) else "Unknown"
+            carry = t.get("carry_over_points", 0) if isinstance(t, dict) else t.carry_over_points
+
+            cp = care_base + (1 if i < care_remainder else 0)
+            cp = max(1, cp - carry)
+            vp = max(0, total_available_slots - cp - admin_point_value)
+
+            update_teacher_points(vacation_id, tid,
+                                  care_points=cp,
+                                  admin_points=admin_point_value,
+                                  vacation_points=vp)
+            results.append({
+                "교사명": tname,
+                "설정돌봄": cp,
+                "설정행정": admin_point_value,
+                "설정휴가": vp,
+                "합계": cp + admin_point_value + vp
+            })
+
+        # 방학 상태를 "input"으로 변경 → 교사들이 신청 입력 가능
+        update_vacation(vacation_id, {"status": "input"})
+
+        st.success("✅ 총량 계산 완료! 방학 상태가 '교사 입력 중'으로 변경되었습니다.")
+        st.info(
+            f"- 총 돌봄 슬롯: **{total_care_slots}개** ÷ {num_teachers}명 → 1인당 **{care_base}~{care_base + 1}회**\n"
+            f"- 행정: **{admin_point_value}회** (모든 교사 동일)\n"
+            f"- 근무 가능: {len(working_days)}일 × 2슬롯 = **{total_available_slots}슬롯**"
+        )
+        st.markdown("**📋 교사별 배포 결과:**")
+        st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+        st.info("💡 교사들이 자신의 총량(설정돌봄/설정행정/설정휴가)을 확인하고 휴가·행정 신청을 입력할 수 있습니다.")
+
+    except Exception as e:
+        st.error(f"❌ 총량 계산 중 오류 발생: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc(), language="python")
 
 
 # ============================================================
